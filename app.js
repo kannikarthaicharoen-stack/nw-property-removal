@@ -16,6 +16,36 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
+// ---------- EmailJS (notification emails) ----------
+// TODO: replace these 3 values after Jay signs up at emailjs.com (see setup guide in chat)
+const EMAILJS_PUBLIC_KEY = "3sGt-ZuFOKnhOCi4E";
+const EMAILJS_SERVICE_ID = "service_zmwbtqh";
+const EMAILJS_TEMPLATE_ID = "template_ko6gf6c";
+
+if (window.emailjs && EMAILJS_PUBLIC_KEY !== "YOUR_PUBLIC_KEY") {
+  emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+}
+
+async function sendNotifyEmail(toEmail, toName, subject, message, passNo) {
+  if (!toEmail) return;
+  if (EMAILJS_SERVICE_ID === "YOUR_SERVICE_ID") {
+    console.warn("EmailJS not configured yet — skipping email:", subject, "to", toEmail);
+    return;
+  }
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: toEmail,
+      to_name: toName || toEmail,
+      subject: subject,
+      message: message,
+      pass_no: passNo || "",
+      link: window.location.origin + window.location.pathname
+    });
+  } catch (e) {
+    console.error("Email send failed:", e);
+  }
+}
+
 // ---------- Cloudinary ----------
 const CLOUDINARY_CLOUD_NAME = "yv2qgreu";
 const CLOUDINARY_UPLOAD_PRESET = "nbc_property_removal";
@@ -88,6 +118,7 @@ const STATUS_LABEL = {
   pending_l2: "รออนุมัติ (ขั้น 2)",
   approved: "อนุมัติ",
   issued: "ออกแล้ว",
+  pending_return: "แจ้งนำกลับ (รอตรวจสอบ)",
   returned: "คืนแล้ว",
   rejected: "ปฏิเสธ"
 };
@@ -353,7 +384,7 @@ function renderPassesView() {
   } else if (currentSubFilter === "my_approval") {
     visible = allPasses.filter(p => p.status === "pending_l2" && (p.approver_l2_email === currentProfile.email || roles.includes("admin") || roles.includes("test_admin")));
   } else if (currentSubFilter === "security_check") {
-    visible = allPasses.filter(p => p.status === "approved" || (p.status === "issued" && p.requires_return));
+    visible = allPasses.filter(p => p.status === "approved" || (p.status === "pending_return" && p.requires_return));
   }
 
   const search = (document.getElementById("passSearch") ? document.getElementById("passSearch").value : "").trim().toLowerCase();
@@ -412,7 +443,7 @@ function passCardHtml(p) {
 
 function isOverdue(p) {
   if (!p.requires_return) return false;
-  if (p.status !== "issued") return false;
+  if (p.status !== "issued" && p.status !== "pending_return") return false;
   if (!p.due_date) return false;
   return new Date(p.due_date) < new Date(new Date().toDateString());
 }
@@ -609,6 +640,12 @@ async function submitNewRequest() {
       updated_at: firebase.firestore.FieldValue.serverTimestamp()
     });
     showToast("ส่งคำขอสำเร็จ (" + passNo + ")", "ok");
+    sendNotifyEmail(
+      deptObj.l1_email, deptObj.l1_name,
+      "มีคำขอนำของออกใหม่รออนุมัติ - " + passNo,
+      name + " (" + deptObj.name_th + ") ส่งคำขอนำของออก กรุณาเข้าระบบเพื่อตรวจสอบและอนุมัติขั้นที่ 1",
+      passNo
+    );
     switchTab("passes");
   } catch (e) {
     console.error(e);
@@ -626,13 +663,20 @@ function openPassDetail(id) {
   const canApproveL1 = (roles.includes("dept_manager") && visibleDeptIdsForCurrentUser().includes(p.requester_dept)) || isTestAdmin;
   const canApproveL2 = (roles.includes("l2_approver") && p.approver_l2_email === currentProfile.email) || isTestAdmin;
   const canSecurityOut = (roles.includes("security") || isTestAdmin) && p.status === "approved";
-  const canConfirmReturn = (roles.includes("return_confirmer") || isTestAdmin) && p.status === "issued" && p.requires_return;
+  const canConfirmReturn = (roles.includes("return_confirmer") || isTestAdmin) && p.status === "pending_return" && p.requires_return;
+  const canNotifyReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "issued" && p.requires_return;
 
   let actionsHtml = "";
   if (p.status === "pending_l1" && canApproveL1) {
     actionsHtml = actionButtons(p.id, "l1");
   } else if (p.status === "pending_l2" && canApproveL2) {
     actionsHtml = actionButtons(p.id, "l2");
+  } else if (canNotifyReturn) {
+    actionsHtml = '<div class="grid2">' +
+      '<div class="field"><label>วันที่จะนำของกลับ *</label><input type="date" id="retNoticeDate"></div>' +
+      '<div class="field"><label>เวลาโดยประมาณ *</label><input type="time" id="retNoticeTime"></div>' +
+    '</div>' +
+    '<div class="formActions"><button class="btnPrimary" style="width:auto;" onclick="submitReturnNotice(\'' + p.id + '\')">📩 แจ้งนำของกลับ / Notify Return</button></div>';
   } else if (canSecurityOut) {
     actionsHtml = '<div class="field"><label>รูปถ่ายยืนยันการตรวจของก่อนนำออก (รปภ.) *</label>' +
       '<div class="photoUpload" onclick="document.getElementById(\'secOutFile\').click()" id="secOutPreview">' +
@@ -687,6 +731,7 @@ function openPassDetail(id) {
         '<div class="kv"><span class="k">ทะเบียนรถ</span><span>' + escapeHtml(p.vehicle_plate || "-") + '</span></div>' +
         (p.due_date ? '<div class="kv"><span class="k">กำหนดคืน</span><span>' + escapeHtml(p.due_date) + '</span></div>' : "") +
         (p.note ? '<div class="kv"><span class="k">หมายเหตุ</span><span>' + escapeHtml(p.note) + '</span></div>' : "") +
+        (p.return_notice_date ? '<div class="kv"><span class="k">แจ้งนำกลับ</span><span>' + escapeHtml(p.return_notice_date) + ' ' + escapeHtml(p.return_notice_time || "") + '</span></div>' : "") +
       '</div>' +
 
       '<div class="detailSection">' +
@@ -721,6 +766,7 @@ function actionButtons(passId, stage) {
 function closeModal() { document.getElementById("modalRoot").innerHTML = ""; window._activePassId = null; }
 
 async function approvePass(id, stage) {
+  const p = allPasses.find(x => x.id === id);
   try {
     const update = { updated_at: firebase.firestore.FieldValue.serverTimestamp() };
     if (stage === "l1") {
@@ -735,12 +781,36 @@ async function approvePass(id, stage) {
     await db.collection("passes").doc(id).update(update);
     showToast("อนุมัติสำเร็จ", "ok");
     closeModal();
+    if (p) {
+      if (stage === "l1") {
+        sendNotifyEmail(
+          p.approver_l2_email, p.approver_l2_name,
+          "รออนุมัติขั้น 2 - " + p.pass_no,
+          p.requester_name + " (" + deptNameById(p.requester_dept) + ") รอการอนุมัติขั้นที่ 2 จากท่าน กรุณาเข้าระบบเพื่อตรวจสอบ",
+          p.pass_no
+        );
+        sendNotifyEmail(
+          p.requester_email, p.requester_name,
+          "คำขอผ่านอนุมัติขั้น 1 แล้ว - " + p.pass_no,
+          "คำขอนำของออกของคุณผ่านการอนุมัติขั้นที่ 1 แล้ว กำลังรออนุมัติขั้นที่ 2 จาก " + p.approver_l2_name,
+          p.pass_no
+        );
+      } else {
+        sendNotifyEmail(
+          p.requester_email, p.requester_name,
+          "คำขอได้รับอนุมัติครบแล้ว - " + p.pass_no,
+          "คำขอนำของออกของคุณได้รับอนุมัติครบทุกขั้นแล้ว พร้อมนำออกได้ (รอ รปภ. ตรวจของก่อนออกจากโรงงาน)",
+          p.pass_no
+        );
+      }
+    }
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
 async function rejectPass(id, stage) {
   const reason = document.getElementById("rejectReason_" + stage).value.trim();
   if (!reason) return showToast("กรุณาระบุเหตุผลในการปฏิเสธ", "err");
+  const p = allPasses.find(x => x.id === id);
   try {
     await db.collection("passes").doc(id).update({
       status: "rejected",
@@ -751,6 +821,14 @@ async function rejectPass(id, stage) {
     });
     showToast("ปฏิเสธคำขอแล้ว", "ok");
     closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "คำขอถูกปฏิเสธ - " + p.pass_no,
+        "คำขอนำของออกของคุณถูกปฏิเสธ เหตุผล: " + reason,
+        p.pass_no
+      );
+    }
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
@@ -770,6 +848,7 @@ async function onSecurityPhoto(file) {
 
 async function confirmSecurityOut(id) {
   if (!_secOutPhotoUrl) return showToast("กรุณาถ่ายรูปยืนยันก่อน", "err");
+  const p = allPasses.find(x => x.id === id);
   try {
     await db.collection("passes").doc(id).update({
       status: "issued",
@@ -780,6 +859,34 @@ async function confirmSecurityOut(id) {
     });
     showToast("ยืนยันตรวจของและออกแล้ว", "ok");
     _secOutPhotoUrl = "";
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "ของออกจากโรงงานแล้ว - " + p.pass_no,
+        "รปภ. ตรวจของและอนุญาตให้นำของออกจากโรงงานเรียบร้อยแล้ว" + (p.requires_return ? " อย่าลืมแจ้งนำของกลับในระบบเมื่อถึงกำหนด" : ""),
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function submitReturnNotice(id) {
+  const dateEl = document.getElementById("retNoticeDate");
+  const timeEl = document.getElementById("retNoticeTime");
+  const date = dateEl ? dateEl.value : "";
+  const time = timeEl ? timeEl.value : "";
+  if (!date || !time) return showToast("กรุณาระบุวันที่และเวลาที่จะนำของกลับ", "err");
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "pending_return",
+      return_notice_date: date,
+      return_notice_time: time,
+      return_notice_by: currentProfile.email,
+      return_notice_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("แจ้งนำของกลับสำเร็จ รอ รปภ./EHS ตรวจของ", "ok");
     closeModal();
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
@@ -814,14 +921,16 @@ async function confirmReturn(id) {
 
 function renderTrackingView() {
   const el = document.getElementById("view-tracking");
-  let list = getVisiblePasses(allPasses).filter(p => p.requires_return && p.status === "issued");
+  let list = getVisiblePasses(allPasses).filter(p => p.requires_return && (p.status === "issued" || p.status === "pending_return"));
   const overdue = list.filter(isOverdue);
-  const notReturned = list.filter(p => !isOverdue(p));
+  const notNotified = list.filter(p => p.status === "issued" && !isOverdue(p));
+  const awaitingInspection = list.filter(p => p.status === "pending_return" && !isOverdue(p));
   const returnedCount = getVisiblePasses(allPasses).filter(p => p.requires_return && p.status === "returned").length;
 
-  let html = '<div class="trackStats">' +
+  let html = '<div class="trackStats" style="grid-template-columns:repeat(4,1fr);">' +
     '<div class="statCard danger"><div class="num">' + overdue.length + '</div><div class="lbl">Overdue</div></div>' +
-    '<div class="statCard warn"><div class="num">' + notReturned.length + '</div><div class="lbl">ยังไม่คืน</div></div>' +
+    '<div class="statCard warn"><div class="num">' + notNotified.length + '</div><div class="lbl">ยังไม่แจ้งคืน</div></div>' +
+    '<div class="statCard"><div class="num">' + awaitingInspection.length + '</div><div class="lbl">รอตรวจสอบ</div></div>' +
     '<div class="statCard"><div class="num" style="color:var(--success)">' + returnedCount + '</div><div class="lbl">คืนแล้ว</div></div>' +
     '</div>';
 
@@ -847,8 +956,8 @@ function renderDashboardView() {
   const issued = list.filter(p => p.status === "issued").length;
   const overdueCount = list.filter(isOverdue).length;
 
-  const statusOrder = ["pending_l1", "pending_l2", "approved", "issued", "returned", "rejected"];
-  const statusColors = { pending_l1: "#E2A400", pending_l2: "#E07A1F", approved: "#2F6FED", issued: "#1F497D", returned: "#2E8B57", rejected: "#D64545" };
+  const statusOrder = ["pending_l1", "pending_l2", "approved", "issued", "pending_return", "returned", "rejected"];
+  const statusColors = { pending_l1: "#E2A400", pending_l2: "#E07A1F", approved: "#2F6FED", issued: "#1F497D", pending_return: "#7C5CE0", returned: "#2E8B57", rejected: "#D64545" };
   const statusCounts = {};
   statusOrder.forEach(s => statusCounts[s] = list.filter(p => p.status === s).length);
   const maxStatus = Math.max(1, Math.max.apply(null, Object.values(statusCounts)));
