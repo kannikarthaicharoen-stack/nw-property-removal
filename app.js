@@ -380,9 +380,9 @@ function renderPassesView() {
 
   if (currentSubFilter === "pending_approval") {
     const depts = visibleDeptIdsForCurrentUser();
-    visible = allPasses.filter(p => p.status === "pending_l1" && (depts.includes(p.requester_dept) || roles.includes("admin") || roles.includes("test_admin")));
+    visible = allPasses.filter(p => (p.status === "pending_l1" || p.ext_status === "pending_l1") && (depts.includes(p.requester_dept) || roles.includes("admin") || roles.includes("test_admin")));
   } else if (currentSubFilter === "my_approval") {
-    visible = allPasses.filter(p => p.status === "pending_l2" && (p.approver_l2_email === currentProfile.email || roles.includes("admin") || roles.includes("test_admin")));
+    visible = allPasses.filter(p => (p.status === "pending_l2" || p.ext_status === "pending_l2") && (p.approver_l2_email === currentProfile.email || roles.includes("admin") || roles.includes("test_admin")));
   } else if (currentSubFilter === "security_check") {
     visible = allPasses.filter(p => p.status === "approved" || (p.status === "pending_return" && p.requires_return));
   }
@@ -429,6 +429,7 @@ function passCardHtml(p) {
   const badgeClass = overdue ? "overdue" : p.status;
   const badgeText = overdue ? "Overdue" : (STATUS_LABEL[p.status] || p.status);
   const rt = removalTypeById(p.removal_type);
+  const extBadge = p.ext_status ? '<span class="badge pending_return" style="margin-left:6px;">ขอต่ออายุ ครั้งที่ ' + ((p.ext_count || 0) + 1) + '</span>' : "";
   return '<div class="passCard" onclick="openPassDetail(\'' + p.id + '\')">' +
     '<div class="row1">' +
     '<div>' +
@@ -436,7 +437,9 @@ function passCardHtml(p) {
     '<div class="who">' + escapeHtml(p.requester_name) + ' — ' + escapeHtml(deptNameById(p.requester_dept)) + '</div>' +
     '<div class="meta">' + (rt ? escapeHtml(rt.th) + "/" + escapeHtml(rt.en) : "") + (p.due_date ? " · Due: " + escapeHtml(p.due_date) : "") + '</div>' +
     '</div>' +
-    '<span class="badge ' + badgeClass + '">' + badgeText + '</span>' +
+    '<div style="text-align:right;">' +
+    '<span class="badge ' + badgeClass + '">' + badgeText + '</span>' + extBadge +
+    '</div>' +
     '</div>' +
     '</div>';
 }
@@ -636,6 +639,8 @@ async function submitNewRequest() {
       due_date: dueDate || null,
       items: newRequestItems.map(i => ({ name: i.name, qty: i.qty, unit: i.unit, note: i.note, photo_url: i.photoUrl })),
       status: "pending_l1",
+      ext_count: 0,
+      ext_status: null,
       created_at: firebase.firestore.FieldValue.serverTimestamp(),
       updated_at: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -664,19 +669,36 @@ function openPassDetail(id) {
   const canApproveL2 = (roles.includes("l2_approver") && p.approver_l2_email === currentProfile.email) || isTestAdmin;
   const canSecurityOut = (roles.includes("security") || isTestAdmin) && p.status === "approved";
   const canConfirmReturn = (roles.includes("return_confirmer") || isTestAdmin) && p.status === "pending_return" && p.requires_return;
-  const canNotifyReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "issued" && p.requires_return;
+  const canNotifyReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "issued" && p.requires_return && !p.ext_status;
+  const canApproveExtL1 = (canApproveL1) && p.ext_status === "pending_l1";
+  const canApproveExtL2 = (canApproveL2) && p.ext_status === "pending_l2";
+  const canRequestExtension = (p.requester_email === currentProfile.email || isTestAdmin) && p.requires_return &&
+    (p.status === "issued" || p.status === "pending_return") && !p.ext_status && (p.ext_count || 0) < 3;
 
   let actionsHtml = "";
-  if (p.status === "pending_l1" && canApproveL1) {
+  if (canApproveExtL1 || canApproveExtL2) {
+    actionsHtml = extensionApprovalPanel(p, p.ext_status === "pending_l1" ? "l1" : "l2");
+  } else if (p.status === "pending_l1" && canApproveL1) {
     actionsHtml = actionButtons(p.id, "l1");
   } else if (p.status === "pending_l2" && canApproveL2) {
     actionsHtml = actionButtons(p.id, "l2");
-  } else if (canNotifyReturn) {
-    actionsHtml = '<div class="grid2">' +
-      '<div class="field"><label>วันที่จะนำของกลับ *</label><input type="date" id="retNoticeDate"></div>' +
-      '<div class="field"><label>เวลาโดยประมาณ *</label><input type="time" id="retNoticeTime"></div>' +
-    '</div>' +
-    '<div class="formActions"><button class="btnPrimary" style="width:auto;" onclick="submitReturnNotice(\'' + p.id + '\')">📩 แจ้งนำของกลับ / Notify Return</button></div>';
+  } else if (canNotifyReturn || canRequestExtension) {
+    actionsHtml = "";
+    if (canNotifyReturn) {
+      actionsHtml += '<div class="grid2">' +
+        '<div class="field"><label>วันที่จะนำของกลับ *</label><input type="date" id="retNoticeDate"></div>' +
+        '<div class="field"><label>เวลาโดยประมาณ *</label><input type="time" id="retNoticeTime"></div>' +
+      '</div>' +
+      '<div class="formActions"><button class="btnPrimary" style="width:auto;" onclick="submitReturnNotice(\'' + p.id + '\')">📩 แจ้งนำของกลับ / Notify Return</button></div>';
+    }
+    if (canRequestExtension) {
+      actionsHtml += '<div style="margin-top:' + (canNotifyReturn ? "16px" : "0") + ';border-top:' + (canNotifyReturn ? "1px solid var(--border);padding-top:14px;" : "none") + '">' +
+        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">นำของกลับตามกำหนดไม่ได้? ขอขยายเวลาได้ (ใช้แล้ว ' + (p.ext_count || 0) + '/3 ครั้ง)</div>' +
+        '<div class="field"><label>วันที่กำหนดคืนใหม่ที่ต้องการ *</label><input type="date" id="extNewDate"></div>' +
+        '<div class="field"><label>เหตุผล *</label><input type="text" id="extReason" placeholder="เหตุผลที่ขอขยายเวลา"></div>' +
+        '<div class="formActions"><button class="btnGhost" onclick="submitExtensionRequest(\'' + p.id + '\')">⏳ ขอขยายเวลานำกลับ</button></div>' +
+      '</div>';
+    }
   } else if (canSecurityOut) {
     actionsHtml = '<div class="field"><label>รูปถ่ายยืนยันการตรวจของก่อนนำออก (รปภ.) *</label>' +
       '<div class="photoUpload" onclick="document.getElementById(\'secOutFile\').click()" id="secOutPreview">' +
@@ -741,6 +763,12 @@ function openPassDetail(id) {
         (p.status === "rejected" ? '<div class="kv"><span class="k">เหตุผลปฏิเสธ</span><span>' + escapeHtml(p.rejected_reason || "-") + '</span></div>' : "") +
       '</div>' +
 
+      (p.requires_return ? '<div class="detailSection">' +
+        '<h4>การขอขยายเวลานำกลับ</h4>' +
+        '<div class="kv"><span class="k">ใช้สิทธิ์ขยายเวลาแล้ว</span><span>' + (p.ext_count || 0) + ' / 3 ครั้ง</span></div>' +
+        (p.ext_status ? '<div class="kv"><span class="k">สถานะคำขอล่าสุด</span><span>รออนุมัติ' + (p.ext_status === "pending_l1" ? " ขั้น 1" : " ขั้น 2") + ' — ขอเปลี่ยนเป็น ' + escapeHtml(p.ext_requested_due_date || "-") + '</span></div>' : "") +
+      '</div>' : "") +
+
       '<div class="detailSection">' +
         '<h4>รายการของ (' + (p.items || []).length + ')</h4>' +
         itemsHtml +
@@ -761,6 +789,125 @@ function actionButtons(passId, stage) {
     '<button class="btnSuccess" onclick="approvePass(\'' + passId + '\',\'' + stage + '\')">✔ อนุมัติ / Approve</button>' +
     '<button class="btnDanger" onclick="rejectPass(\'' + passId + '\',\'' + stage + '\')">✕ ปฏิเสธ / Reject</button>' +
   '</div>';
+}
+
+function extensionApprovalPanel(p, stage) {
+  return '<div style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:12px;">' +
+    '<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px;">คำขอขยายเวลานำกลับ ครั้งที่ ' + ((p.ext_count || 0) + 1) + ' — ' + (stage === "l1" ? "รออนุมัติขั้น 1" : "รออนุมัติขั้น 2") + '</div>' +
+    '<div class="kv"><span class="k">วันที่กำหนดเดิม</span><span>' + escapeHtml(p.due_date || "-") + '</span></div>' +
+    '<div class="kv"><span class="k">วันที่ขอเปลี่ยนเป็น</span><span>' + escapeHtml(p.ext_requested_due_date || "-") + '</span></div>' +
+    '<div class="kv"><span class="k">เหตุผล</span><span>' + escapeHtml(p.ext_reason || "-") + '</span></div>' +
+  '</div>' +
+  '<div class="field"><label>เหตุผล (กรณีปฏิเสธ)</label><input type="text" id="extRejectReason_' + stage + '" placeholder="ระบุเหตุผล..."></div>' +
+  '<div class="formActions">' +
+    '<button class="btnSuccess" onclick="approveExtension(\'' + p.id + '\',\'' + stage + '\')">✔ อนุมัติการขยายเวลา</button>' +
+    '<button class="btnDanger" onclick="rejectExtension(\'' + p.id + '\',\'' + stage + '\')">✕ ปฏิเสธ</button>' +
+  '</div>';
+}
+
+async function submitExtensionRequest(id) {
+  const dateEl = document.getElementById("extNewDate");
+  const reasonEl = document.getElementById("extReason");
+  const newDate = dateEl ? dateEl.value : "";
+  const reason = reasonEl ? reasonEl.value.trim() : "";
+  if (!newDate) return showToast("กรุณาระบุวันที่กำหนดคืนใหม่ที่ต้องการ", "err");
+  if (!reason) return showToast("กรุณาระบุเหตุผลที่ขอขยายเวลา", "err");
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      ext_status: "pending_l1",
+      ext_requested_due_date: newDate,
+      ext_reason: reason,
+      ext_requested_by: currentProfile.email,
+      ext_requested_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ส่งคำขอขยายเวลาแล้ว รอผู้อนุมัติขั้น 1", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.approver_l1_email, p.approver_l1_name,
+        "มีคำขอขยายเวลานำของกลับ - " + p.pass_no,
+        p.requester_name + " ขอขยายเวลานำของกลับ (ครั้งที่ " + ((p.ext_count || 0) + 1) + ") เป็นวันที่ " + newDate + " เหตุผล: " + reason,
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function approveExtension(id, stage) {
+  const p = allPasses.find(x => x.id === id);
+  try {
+    if (stage === "l1") {
+      await db.collection("passes").doc(id).update({
+        ext_status: "pending_l2",
+        ext_l1_approved_at: firebase.firestore.FieldValue.serverTimestamp(),
+        ext_l1_approved_by: currentProfile.email,
+        updated_at: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      showToast("อนุมัติขั้น 1 แล้ว รอผู้อนุมัติขั้น 2", "ok");
+      if (p) {
+        sendNotifyEmail(
+          p.approver_l2_email, p.approver_l2_name,
+          "รออนุมัติคำขอขยายเวลา ขั้น 2 - " + p.pass_no,
+          p.requester_name + " ขอขยายเวลานำของกลับ เป็นวันที่ " + p.ext_requested_due_date + " รอการอนุมัติขั้นที่ 2 จากท่าน",
+          p.pass_no
+        );
+        sendNotifyEmail(
+          p.requester_email, p.requester_name,
+          "คำขอขยายเวลาผ่านขั้น 1 แล้ว - " + p.pass_no,
+          "คำขอขยายเวลานำของกลับผ่านการอนุมัติขั้นที่ 1 แล้ว กำลังรออนุมัติขั้นที่ 2",
+          p.pass_no
+        );
+      }
+    } else {
+      const newCount = (p ? (p.ext_count || 0) : 0) + 1;
+      await db.collection("passes").doc(id).update({
+        due_date: p.ext_requested_due_date,
+        ext_status: null,
+        ext_count: newCount,
+        ext_l2_approved_at: firebase.firestore.FieldValue.serverTimestamp(),
+        ext_l2_approved_by: currentProfile.email,
+        ext_requested_due_date: null,
+        updated_at: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      showToast("อนุมัติการขยายเวลาสำเร็จ (ครั้งที่ " + newCount + "/3)", "ok");
+      if (p) {
+        sendNotifyEmail(
+          p.requester_email, p.requester_name,
+          "ขยายเวลานำของกลับสำเร็จ - " + p.pass_no,
+          "คำขอขยายเวลานำของกลับได้รับอนุมัติครบแล้ว วันที่กำหนดคืนใหม่: " + p.ext_requested_due_date + " (ใช้สิทธิ์ขยายเวลาไปแล้ว " + newCount + "/3 ครั้ง)",
+          p.pass_no
+        );
+      }
+    }
+    closeModal();
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function rejectExtension(id, stage) {
+  const reason = document.getElementById("extRejectReason_" + stage).value.trim();
+  if (!reason) return showToast("กรุณาระบุเหตุผลในการปฏิเสธ", "err");
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      ext_status: null,
+      ext_requested_due_date: null,
+      ext_last_rejected_reason: reason,
+      ext_last_rejected_stage: stage,
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ปฏิเสธคำขอขยายเวลาแล้ว", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "คำขอขยายเวลาถูกปฏิเสธ - " + p.pass_no,
+        "คำขอขยายเวลานำของกลับถูกปฏิเสธ เหตุผล: " + reason + " (วันที่กำหนดคืนเดิมยังคงอยู่: " + p.due_date + ")",
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
 function closeModal() { document.getElementById("modalRoot").innerHTML = ""; window._activePassId = null; }
