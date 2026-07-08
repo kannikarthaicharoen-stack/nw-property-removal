@@ -375,13 +375,13 @@ function renderPassesView() {
   const el = document.getElementById("view-passes");
   const roles = currentProfile.roles;
   const subtabs = [{ id: "all", label: "All / ทั้งหมด" }];
-  if (roles.includes("dept_manager") || roles.includes("admin") || roles.includes("test_admin")) {
+  if (roles.includes("dept_manager") || roles.includes("test_admin")) {
     subtabs.push({ id: "pending_approval", label: "Pending Approval / รอฉัน (ผจก.)" });
   }
-  if (roles.includes("l2_approver") || roles.includes("admin") || roles.includes("test_admin")) {
+  if (roles.includes("l2_approver") || roles.includes("test_admin")) {
     subtabs.push({ id: "my_approval", label: "My Approval / รออนุมัติ" });
   }
-  if (roles.includes("security") || roles.includes("admin") || roles.includes("test_admin")) {
+  if (roles.includes("security") || roles.includes("return_confirmer") || roles.includes("test_admin")) {
     subtabs.push({ id: "security_check", label: "Security Check / รปภ." });
   }
 
@@ -389,9 +389,9 @@ function renderPassesView() {
 
   if (currentSubFilter === "pending_approval") {
     const depts = visibleDeptIdsForCurrentUser();
-    visible = allPasses.filter(p => (p.status === "pending_l1" || p.ext_status === "pending_l1") && (depts.includes(p.requester_dept) || roles.includes("admin") || roles.includes("test_admin")));
+    visible = allPasses.filter(p => (p.status === "pending_l1" || p.ext_status === "pending_l1") && (depts.includes(p.requester_dept) || roles.includes("test_admin")));
   } else if (currentSubFilter === "my_approval") {
-    visible = allPasses.filter(p => (p.status === "pending_l2" || p.ext_status === "pending_l2") && (p.approver_l2_email === currentProfile.email || roles.includes("admin") || roles.includes("test_admin")));
+    visible = allPasses.filter(p => (p.status === "pending_l2" || p.ext_status === "pending_l2") && (p.approver_l2_email === currentProfile.email || roles.includes("test_admin")));
   } else if (currentSubFilter === "security_check") {
     visible = allPasses.filter(p => p.status === "approved" || (p.status === "pending_return" && p.requires_return));
   }
@@ -673,7 +673,10 @@ function openPassDetail(id) {
   const p = allPasses.find(x => x.id === id);
   if (!p) return;
   const roles = currentProfile.roles;
-  const isTestAdmin = roles.includes("test_admin") || roles.includes("admin");
+  // NOTE: "isTestAdmin" intentionally means the TEST ADMIN role only (full bypass, for testing every path).
+  // Plain "admin" (Kulitsara/Naowadee/Monthean) gets full visibility + Dashboard + return-confirm duty
+  // (handled elsewhere via getVisiblePasses / dashboard / return_confirmer role) but NOT an approve/security bypass here.
+  const isTestAdmin = roles.includes("test_admin");
   const canApproveL1 = (roles.includes("dept_manager") && visibleDeptIdsForCurrentUser().includes(p.requester_dept)) || isTestAdmin;
   const canApproveL2 = (roles.includes("l2_approver") && p.approver_l2_email === currentProfile.email) || isTestAdmin;
   const canSecurityOut = (roles.includes("security") || isTestAdmin) && p.status === "approved";
@@ -684,49 +687,62 @@ function openPassDetail(id) {
   const canRequestExtension = (p.requester_email === currentProfile.email || isTestAdmin) && !roles.includes("security") && p.requires_return &&
     (p.status === "issued" || p.status === "pending_return") && !p.ext_status && (p.ext_count || 0) < 3;
 
-  let actionsHtml = "";
+  const blocks = [];
   if (canApproveExtL1 || canApproveExtL2) {
-    actionsHtml = extensionApprovalPanel(p, p.ext_status === "pending_l1" ? "l1" : "l2");
+    // A pending extension-approval gates everything else until resolved.
+    blocks.push(extensionApprovalPanel(p, p.ext_status === "pending_l1" ? "l1" : "l2"));
   } else if (p.status === "pending_l1" && canApproveL1) {
-    actionsHtml = actionButtons(p.id, "l1");
+    blocks.push(actionButtons(p.id, "l1"));
   } else if (p.status === "pending_l2" && canApproveL2) {
-    actionsHtml = actionButtons(p.id, "l2");
-  } else if (canNotifyReturn || canRequestExtension) {
-    actionsHtml = "";
-    if (canNotifyReturn) {
-      actionsHtml += '<div class="grid2">' +
-        '<div class="field"><label>วันที่จะนำของกลับ *</label><input type="date" id="retNoticeDate"></div>' +
-        '<div class="field"><label>เวลาโดยประมาณ *</label><input type="time" id="retNoticeTime"></div>' +
+    blocks.push(actionButtons(p.id, "l2"));
+  } else {
+    // Status-driven actions can coexist (e.g. security/EHS confirming return, while the
+    // requester-side extension option is also offered if the same account also qualifies).
+    if (canSecurityOut) {
+      blocks.push(
+        '<div class="field"><label>รูปถ่ายยืนยันการตรวจของก่อนนำออก (รปภ.) *</label>' +
+          '<div class="photoUpload" onclick="document.getElementById(\'secOutFile\').click()" id="secOutPreview">' +
+            '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
+          '</div>' +
+          '<input type="file" id="secOutFile" accept="image/*" capture="environment" class="hidden" onchange="onSecurityPhoto(this.files[0])">' +
+        '</div>' +
+        '<div class="formActions"><button class="btnSuccess" id="btnSecOut" onclick="confirmSecurityOut(\'' + p.id + '\')">✔ ยืนยันตรวจของ & ออกแล้ว</button></div>'
+      );
+    }
+    if (canConfirmReturn) {
+      blocks.push(
+        '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">🔍 ตรวจสอบของที่นำกลับ</div>' +
+        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">แจ้งนำกลับ: ' + escapeHtml(p.return_notice_date || "-") + ' เวลา ' + escapeHtml(p.return_notice_time || "-") + '</div>' +
+        '<div class="field"><label>รูปถ่ายยืนยันการตรวจของตอนคืน (รปภ./EHS) *</label>' +
+        '<div class="photoUpload" onclick="document.getElementById(\'secRetFile\').click()" id="secRetPreview">' +
+          '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
+        '</div>' +
+        '<input type="file" id="secRetFile" accept="image/*" capture="environment" class="hidden" onchange="onReturnPhoto(this.files[0])">' +
       '</div>' +
-      '<div class="formActions"><button class="btnPrimary" style="width:auto;" onclick="submitReturnNotice(\'' + p.id + '\')">📩 แจ้งนำของกลับ / Notify Return</button></div>';
+      '<div class="formActions"><button class="btnSuccess" id="btnConfirmReturn" onclick="confirmReturn(\'' + p.id + '\')">✔ ยืนยันคืนของแล้ว</button></div>'
+      );
+    }
+    if (canNotifyReturn) {
+      blocks.push(
+        '<div class="grid2">' +
+          '<div class="field"><label>วันที่จะนำของกลับ *</label><input type="date" id="retNoticeDate"></div>' +
+          '<div class="field"><label>เวลาโดยประมาณ *</label><input type="time" id="retNoticeTime"></div>' +
+        '</div>' +
+        '<div class="formActions"><button class="btnPrimary" style="width:auto;" onclick="submitReturnNotice(\'' + p.id + '\')">📩 แจ้งนำของกลับ / Notify Return</button></div>'
+      );
     }
     if (canRequestExtension) {
-      actionsHtml += '<div style="margin-top:' + (canNotifyReturn ? "16px" : "0") + ';border-top:' + (canNotifyReturn ? "1px solid var(--border);padding-top:14px;" : "none") + '">' +
-        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">นำของกลับตามกำหนดไม่ได้? ขอขยายเวลาได้ (ใช้แล้ว ' + (p.ext_count || 0) + '/3 ครั้ง)</div>' +
-        '<div class="field"><label>วันที่กำหนดคืนใหม่ที่ต้องการ *</label><input type="date" id="extNewDate"></div>' +
-        '<div class="field"><label>เหตุผล *</label><input type="text" id="extReason" placeholder="เหตุผลที่ขอขยายเวลา"></div>' +
-        '<div class="formActions"><button class="btnGhost" onclick="submitExtensionRequest(\'' + p.id + '\')">⏳ ขอขยายเวลานำกลับ</button></div>' +
-      '</div>';
+      blocks.push(
+        '<div>' +
+          '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px;">นำของกลับตามกำหนดไม่ได้? ขอขยายเวลาได้ (ใช้แล้ว ' + (p.ext_count || 0) + '/3 ครั้ง)</div>' +
+          '<div class="field"><label>วันที่กำหนดคืนใหม่ที่ต้องการ *</label><input type="date" id="extNewDate"></div>' +
+          '<div class="field"><label>เหตุผล *</label><input type="text" id="extReason" placeholder="เหตุผลที่ขอขยายเวลา"></div>' +
+          '<div class="formActions"><button class="btnGhost" onclick="submitExtensionRequest(\'' + p.id + '\')">⏳ ขอขยายเวลานำกลับ</button></div>' +
+        '</div>'
+      );
     }
-  } else if (canSecurityOut) {
-    actionsHtml = '<div class="field"><label>รูปถ่ายยืนยันการตรวจของก่อนนำออก (รปภ.) *</label>' +
-      '<div class="photoUpload" onclick="document.getElementById(\'secOutFile\').click()" id="secOutPreview">' +
-        '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
-      '</div>' +
-      '<input type="file" id="secOutFile" accept="image/*" capture="environment" class="hidden" onchange="onSecurityPhoto(this.files[0])">' +
-    '</div>' +
-    '<div class="formActions"><button class="btnSuccess" id="btnSecOut" onclick="confirmSecurityOut(\'' + p.id + '\')">✔ ยืนยันตรวจของ & ออกแล้ว</button></div>';
-  } else if (canConfirmReturn) {
-    actionsHtml = '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">🔍 ตรวจสอบของที่นำกลับ</div>' +
-      '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">แจ้งนำกลับ: ' + escapeHtml(p.return_notice_date || "-") + ' เวลา ' + escapeHtml(p.return_notice_time || "-") + '</div>' +
-      '<div class="field"><label>รูปถ่ายยืนยันการตรวจของตอนคืน (รปภ./EHS) *</label>' +
-      '<div class="photoUpload" onclick="document.getElementById(\'secRetFile\').click()" id="secRetPreview">' +
-        '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
-      '</div>' +
-      '<input type="file" id="secRetFile" accept="image/*" capture="environment" class="hidden" onchange="onReturnPhoto(this.files[0])">' +
-    '</div>' +
-    '<div class="formActions"><button class="btnSuccess" id="btnConfirmReturn" onclick="confirmReturn(\'' + p.id + '\')">✔ ยืนยันคืนของแล้ว</button></div>';
   }
+  const actionsHtml = blocks.join('<div style="height:16px;border-top:1px solid var(--border);margin-bottom:16px;"></div>');
 
   const itemsHtml = (p.items || []).map(it => {
     return '<div class="itemRowView">' +
