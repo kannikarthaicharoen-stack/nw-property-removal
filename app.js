@@ -149,14 +149,33 @@ let newRequestItems = [];    // [{id, name, qty, unit, note, photoUrl, uploading
 // =========================================================
 function toggleAuthMode(mode) {
   document.getElementById("authMsg").classList.add("hidden");
+  document.getElementById("loginForm").classList.add("hidden");
+  document.getElementById("signupForm").classList.add("hidden");
+  document.getElementById("forgotForm").classList.add("hidden");
   if (mode === "signup") {
-    document.getElementById("loginForm").classList.add("hidden");
     document.getElementById("signupForm").classList.remove("hidden");
     document.getElementById("authTitle").textContent = "สมัครใช้งาน";
+  } else if (mode === "forgot") {
+    document.getElementById("forgotForm").classList.remove("hidden");
+    document.getElementById("authTitle").textContent = "ลืมรหัสผ่าน";
   } else {
-    document.getElementById("signupForm").classList.add("hidden");
     document.getElementById("loginForm").classList.remove("hidden");
     document.getElementById("authTitle").textContent = "เข้าสู่ระบบ";
+  }
+}
+
+async function doForgotPassword() {
+  const email = document.getElementById("forgotEmail").value.trim();
+  if (!email) return showAuthMsg("กรุณากรอก Email", "err");
+  const btn = document.getElementById("btnForgot");
+  btn.disabled = true; btn.innerHTML = '<span class="loadingSpin"></span>กำลังส่ง...';
+  try {
+    await auth.sendPasswordResetEmail(email);
+    showAuthMsg("ส่ง Email แล้ว! กรุณาเช็คกล่องจดหมาย (รวมถึง Junk/Spam) แล้วกดลิงก์เพื่อตั้งรหัสผ่านใหม่", "ok");
+  } catch (e) {
+    showAuthMsg(translateAuthErr(e), "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "ส่งลิงก์ตั้งรหัสผ่านใหม่";
   }
 }
 
@@ -222,6 +241,55 @@ function translateAuthErr(e) {
 function doLogout() {
   if (unsubPasses) unsubPasses();
   auth.signOut();
+}
+
+function openChangePasswordModal() {
+  const modalHtml = `
+  <div class="modalOverlay" onclick="if(event.target.classList.contains('modalOverlay'))closeModal()">
+    <div class="modalBox" style="max-width:420px;">
+      <div class="modalHead">
+        <h2>เปลี่ยนรหัสผ่าน</h2>
+        <button onclick="closeModal()">✕</button>
+      </div>
+      <div id="cpwMsg" class="authMsg hidden" style="margin-top:14px;"></div>
+      <div class="field" style="margin-top:14px;"><label>รหัสผ่านปัจจุบัน</label><input type="password" id="cpwCurrent" placeholder="••••••••"></div>
+      <div class="field"><label>รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)</label><input type="password" id="cpwNew" placeholder="••••••••"></div>
+      <div class="field"><label>ยืนยันรหัสผ่านใหม่</label><input type="password" id="cpwConfirm" placeholder="••••••••"></div>
+      <div class="formActions">
+        <button class="btnPrimary" style="width:auto;" id="btnChangePw" onclick="submitChangePassword()">บันทึกรหัสผ่านใหม่</button>
+        <button class="btnGhost" onclick="closeModal()">ยกเลิก</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById("modalRoot").innerHTML = modalHtml;
+}
+
+function showCpwMsg(msg, type) {
+  const el = document.getElementById("cpwMsg");
+  el.textContent = msg;
+  el.className = "authMsg " + (type === "err" ? "err" : "ok");
+  el.classList.remove("hidden");
+}
+
+async function submitChangePassword() {
+  const current = document.getElementById("cpwCurrent").value;
+  const next = document.getElementById("cpwNew").value;
+  const confirm = document.getElementById("cpwConfirm").value;
+  if (!current || !next || !confirm) return showCpwMsg("กรุณากรอกข้อมูลให้ครบ", "err");
+  if (next.length < 6) return showCpwMsg("รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร", "err");
+  if (next !== confirm) return showCpwMsg("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน", "err");
+  const btn = document.getElementById("btnChangePw");
+  btn.disabled = true; btn.innerHTML = '<span class="loadingSpin"></span>กำลังบันทึก...';
+  try {
+    const cred = firebase.auth.EmailAuthProvider.credential(currentUser.email, current);
+    await currentUser.reauthenticateWithCredential(cred);
+    await currentUser.updatePassword(next);
+    showToast("เปลี่ยนรหัสผ่านสำเร็จ", "ok");
+    closeModal();
+  } catch (e) {
+    showCpwMsg(translateAuthErr(e), "err");
+    btn.disabled = false; btn.textContent = "บันทึกรหัสผ่านใหม่";
+  }
 }
 
 auth.onAuthStateChanged(async (user) => {
