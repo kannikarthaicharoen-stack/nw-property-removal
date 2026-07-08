@@ -93,6 +93,15 @@ const L2_APPROVERS = [
   { email: "sippakorn_rattanaphun@natureworkspla.com", name: "Sippakorn Rattanaphun" }
 ];
 
+// Recipients notified whenever a requester submits a Return Notice (security + EHS return-confirmer group)
+const RETURN_NOTICE_RECIPIENTS = [
+  { email: "nbc_guardhouse@natureworkspla.com", name: "รปภ. (Guardhouse)" },
+  { email: "kulitsara_kralam@natureworkspla.com", name: "Kulitsara Kralam" },
+  { email: "kannikar_thaicharoen@natureworkspla.com", name: "Kannikar Thaicharoen (NW)" },
+  { email: "naowadee_kotwit@natureworkspla.com", name: "Naowadee Kotwit" },
+  { email: "monthean_sathirayakorn@natureworkspla.com", name: "Monthean Sathirayakorn" }
+];
+
 // email(lowercase) -> profile
 const APPROVER_DIRECTORY = {
   "kannikar.thaicharoen@gmail.com": { name: "Kannikar Thaicharoen", roles: ["admin", "test_admin", "return_confirmer"], dashboard: "all" },
@@ -668,11 +677,11 @@ function openPassDetail(id) {
   const canApproveL1 = (roles.includes("dept_manager") && visibleDeptIdsForCurrentUser().includes(p.requester_dept)) || isTestAdmin;
   const canApproveL2 = (roles.includes("l2_approver") && p.approver_l2_email === currentProfile.email) || isTestAdmin;
   const canSecurityOut = (roles.includes("security") || isTestAdmin) && p.status === "approved";
-  const canConfirmReturn = (roles.includes("return_confirmer") || isTestAdmin) && p.status === "pending_return" && p.requires_return;
+  const canConfirmReturn = (roles.includes("return_confirmer") || roles.includes("security") || isTestAdmin) && p.status === "pending_return" && p.requires_return;
   const canNotifyReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "issued" && p.requires_return && !p.ext_status;
   const canApproveExtL1 = (canApproveL1) && p.ext_status === "pending_l1";
   const canApproveExtL2 = (canApproveL2) && p.ext_status === "pending_l2";
-  const canRequestExtension = (p.requester_email === currentProfile.email || isTestAdmin) && p.requires_return &&
+  const canRequestExtension = (p.requester_email === currentProfile.email || isTestAdmin) && !roles.includes("security") && p.requires_return &&
     (p.status === "issued" || p.status === "pending_return") && !p.ext_status && (p.ext_count || 0) < 3;
 
   let actionsHtml = "";
@@ -708,7 +717,9 @@ function openPassDetail(id) {
     '</div>' +
     '<div class="formActions"><button class="btnSuccess" id="btnSecOut" onclick="confirmSecurityOut(\'' + p.id + '\')">✔ ยืนยันตรวจของ & ออกแล้ว</button></div>';
   } else if (canConfirmReturn) {
-    actionsHtml = '<div class="field"><label>รูปถ่ายยืนยันการตรวจของตอนคืน (รปภ./EHS) *</label>' +
+    actionsHtml = '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">🔍 ตรวจสอบของที่นำกลับ</div>' +
+      '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">แจ้งนำกลับ: ' + escapeHtml(p.return_notice_date || "-") + ' เวลา ' + escapeHtml(p.return_notice_time || "-") + '</div>' +
+      '<div class="field"><label>รูปถ่ายยืนยันการตรวจของตอนคืน (รปภ./EHS) *</label>' +
       '<div class="photoUpload" onclick="document.getElementById(\'secRetFile\').click()" id="secRetPreview">' +
         '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
       '</div>' +
@@ -1024,6 +1035,7 @@ async function submitReturnNotice(id) {
   const date = dateEl ? dateEl.value : "";
   const time = timeEl ? timeEl.value : "";
   if (!date || !time) return showToast("กรุณาระบุวันที่และเวลาที่จะนำของกลับ", "err");
+  const p = allPasses.find(x => x.id === id);
   try {
     await db.collection("passes").doc(id).update({
       status: "pending_return",
@@ -1035,6 +1047,16 @@ async function submitReturnNotice(id) {
     });
     showToast("แจ้งนำของกลับสำเร็จ รอ รปภ./EHS ตรวจของ", "ok");
     closeModal();
+    if (p) {
+      RETURN_NOTICE_RECIPIENTS.forEach(r => {
+        sendNotifyEmail(
+          r.email, r.name,
+          "แจ้งนำของกลับ - โปรดตรวจของ - " + p.pass_no,
+          p.requester_name + " (" + deptNameById(p.requester_dept) + ") แจ้งนำของกลับเข้าโรงงาน วันที่ " + date + " เวลาประมาณ " + time + " กรุณาตรวจของและถ่ายรูปยืนยันในระบบ (Tab \"Security Check\")",
+          p.pass_no
+        );
+      });
+    }
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
