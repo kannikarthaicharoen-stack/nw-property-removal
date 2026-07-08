@@ -55,6 +55,7 @@ header.topbar{background:#fff;border-bottom:1px solid var(--border);padding:14px
 .userbox .name{font-weight:600;color:var(--text);}
 .userbox .role{color:var(--muted);font-size:11.5px;}
 .userbox button{background:none;border:none;color:var(--danger);font-size:12px;cursor:pointer;padding:2px 0;}
+.userbox .changePwBtn{color:var(--teal-dark);margin-right:10px;}
 
 nav.tabs{background:#fff;border-bottom:1px solid var(--border);padding:0 24px;display:flex;gap:4px;overflow-x:auto;}
 nav.tabs button{background:none;border:none;padding:13px 14px;font-size:13.5px;color:var(--muted);border-bottom:2.5px solid transparent;white-space:nowrap;font-weight:500;}
@@ -177,8 +178,9 @@ main{flex:1;padding:20px 24px 60px;max-width:1080px;width:100%;margin:0 auto;}
       <div class="field"><label>Email</label><input type="email" id="loginEmail" placeholder="name@natureworkspla.com"></div>
       <div class="field"><label>Password</label><input type="password" id="loginPassword" placeholder="••••••••"></div>
       <button class="btnPrimary" id="btnLogin" onclick="doLogin()">เข้าสู่ระบบ</button>
-      <div style="text-align:center;margin-top:14px;">
+      <div style="text-align:center;margin-top:14px;display:flex;justify-content:center;gap:16px;">
         <button class="linkBtn" onclick="toggleAuthMode('signup')">ยังไม่มีบัญชี? สมัครใช้งาน</button>
+        <button class="linkBtn" onclick="toggleAuthMode('forgot')">ลืมรหัสผ่าน?</button>
       </div>
     </div>
 
@@ -191,6 +193,15 @@ main{flex:1;padding:20px 24px 60px;max-width:1080px;width:100%;margin:0 auto;}
         <button class="linkBtn" onclick="toggleAuthMode('login')">มีบัญชีแล้ว? เข้าสู่ระบบ</button>
       </div>
     </div>
+
+    <div id="forgotForm" class="hidden">
+      <div class="sub" style="margin:-6px 0 16px;">กรอก Email ที่ใช้สมัครไว้ ระบบจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปให้ทาง Email</div>
+      <div class="field"><label>Email</label><input type="email" id="forgotEmail" placeholder="name@natureworkspla.com"></div>
+      <button class="btnPrimary" id="btnForgot" onclick="doForgotPassword()">ส่งลิงก์ตั้งรหัสผ่านใหม่</button>
+      <div style="text-align:center;margin-top:14px;">
+        <button class="linkBtn" onclick="toggleAuthMode('login')">กลับไปหน้าเข้าสู่ระบบ</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -200,7 +211,7 @@ main{flex:1;padding:20px 24px 60px;max-width:1080px;width:100%;margin:0 auto;}
     <div class="brand">
       <div class="logoStack">
         <div class="dot"></div>
-        <div class="versionBadge">v1.5</div>
+        <div class="versionBadge">v1.6</div>
       </div>
       <div class="brand-text">
         <h1>Plant Property Removal</h1>
@@ -210,6 +221,7 @@ main{flex:1;padding:20px 24px 60px;max-width:1080px;width:100%;margin:0 auto;}
     <div class="userbox">
       <div class="name" id="ubName">-</div>
       <div class="role" id="ubRole">-</div>
+      <button class="changePwBtn" onclick="openChangePasswordModal()">เปลี่ยนรหัสผ่าน</button>
       <button onclick="doLogout()">ออกจากระบบ</button>
     </div>
   </header>
