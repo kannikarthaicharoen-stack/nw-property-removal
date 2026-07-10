@@ -122,6 +122,21 @@ const APPROVER_DIRECTORY = {
   "nbc_guardhouse@natureworkspla.com": { name: "รปภ. (Guardhouse)", roles: ["security"], dashboard: "none" }
 };
 
+const SECURITY_OUT_REJECT_REASONS = [
+  "ของไม่ตรงกับรายการที่ขออนุมัติ",
+  "จำนวนของไม่ครบตามที่ระบุ",
+  "ไม่มีใบอนุมัติ/เอกสารครบถ้วน",
+  "สภาพของผิดปกติ/ต้องสงสัย",
+  "อื่นๆ โปรดระบุ"
+];
+const RETURN_REJECT_REASONS = [
+  "ของไม่ครบตามรายการที่นำออกไป",
+  "สภาพของเสียหาย/ผิดปกติ",
+  "นำของกลับมาผิดชิ้น/ผิดประเภท",
+  "อื่นๆ โปรดระบุ"
+];
+const CURRENCIES = ["THB", "USD", "EUR", "JPY", "CNY", "GBP"];
+
 const STATUS_LABEL = {
   pending_l1: "รออนุมัติ (ขั้น 1)",
   pending_l2: "รออนุมัติ (ขั้น 2)",
@@ -399,6 +414,49 @@ function fmtDate(ts) {
   return d.toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 
+function fmtDateTime(ts) {
+  if (!ts) return "-";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const datePart = d.toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return datePart + " " + hh + ":" + mm + " น.";
+}
+
+function fmtMoney(val, currency) {
+  if (val === undefined || val === null || val === "") return "-";
+  const num = Number(val);
+  const formatted = num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatted + " " + (currency || "THB");
+}
+
+function reasonDropdownHtml(idPrefix, reasons) {
+  return '<div class="field"><label>เหตุผล (กรณีปฏิเสธ) *</label>' +
+    '<select id="' + idPrefix + '_select" onchange="onReasonSelectChange(\'' + idPrefix + '\')">' +
+    '<option value="">เลือกเหตุผล</option>' +
+    reasons.map(r => '<option value="' + escapeHtml(r) + '">' + escapeHtml(r) + '</option>').join("") +
+    '</select></div>' +
+    '<div class="field hidden" id="' + idPrefix + '_otherWrap"><label>โปรดระบุ *</label><input type="text" id="' + idPrefix + '_otherText" placeholder="ระบุเหตุผลเพิ่มเติม..."></div>';
+}
+
+function onReasonSelectChange(idPrefix) {
+  const sel = document.getElementById(idPrefix + "_select").value;
+  document.getElementById(idPrefix + "_otherWrap").classList.toggle("hidden", sel !== "อื่นๆ โปรดระบุ");
+}
+
+function getReasonValue(idPrefix) {
+  const selEl = document.getElementById(idPrefix + "_select");
+  const sel = selEl ? selEl.value : "";
+  if (!sel) { showToast("กรุณาเลือกเหตุผลในการปฏิเสธ", "err"); return null; }
+  if (sel === "อื่นๆ โปรดระบุ") {
+    const otherEl = document.getElementById(idPrefix + "_otherText");
+    const other = otherEl ? otherEl.value.trim() : "";
+    if (!other) { showToast("กรุณาระบุเหตุผลเพิ่มเติม", "err"); return null; }
+    return "อื่นๆ: " + other;
+  }
+  return sel;
+}
+
 function deptNameById(id) {
   const d = DEPARTMENTS.find(x => x.id === id);
   return d ? d.name_th : id;
@@ -571,6 +629,12 @@ function renderNewRequestView() {
         '<label>กำหนดวันนำกลับ (Due date)</label>' +
         '<input type="date" id="reqDueDate">' +
       '</div>' +
+      '<div class="grid2" style="margin-top:14px;">' +
+        '<div class="field"><label>มูลค่าสินค้า (โดยประมาณ) *</label><input type="number" min="0" step="0.01" id="reqItemValue" placeholder="0.00"></div>' +
+        '<div class="field"><label>สกุลเงิน</label><select id="reqCurrency">' +
+          CURRENCIES.map(c => '<option value="' + c + '"' + (c === "THB" ? " selected" : "") + '>' + c + '</option>').join("") +
+        '</select></div>' +
+      '</div>' +
       '<div class="field" style="margin-top:14px;"><label>หมายเหตุ</label><textarea id="reqNote" rows="2" placeholder="หมายเหตุเพิ่มเติม..."></textarea></div>' +
     '</div>' +
 
@@ -681,11 +745,16 @@ async function submitNewRequest() {
   const l2email = document.getElementById("reqL2").value;
   const note = document.getElementById("reqNote").value.trim();
   const dueDate = document.getElementById("reqDueDate") ? document.getElementById("reqDueDate").value : "";
+  const itemValueRaw = document.getElementById("reqItemValue").value;
+  const itemValue = itemValueRaw === "" ? null : Number(itemValueRaw);
+  const itemCurrency = document.getElementById("reqCurrency").value;
 
   if (!dept) return showToast("กรุณาเลือกแผนก", "err");
   if (!name) return showToast("กรุณากรอกชื่อผู้ขอ", "err");
   if (!purpose) return showToast("กรุณาเลือกวัตถุประสงค์", "err");
   if (!l2email) return showToast("กรุณาเลือกผู้อนุมัติขั้น 2", "err");
+  if (itemValueRaw === "") return showToast("กรุณากรอกมูลค่าสินค้า", "err");
+  if (isNaN(itemValue) || itemValue < 0) return showToast("กรุณากรอกมูลค่าสินค้าเป็นตัวเลขที่ถูกต้อง", "err");
   if (newRequestItems.length === 0) return showToast("กรุณาเพิ่มรายการของอย่างน้อย 1 รายการ", "err");
   for (const it of newRequestItems) {
     if (!it.name.trim()) return showToast("กรุณากรอกชื่อของให้ครบทุกรายการ", "err");
@@ -714,6 +783,8 @@ async function submitNewRequest() {
       approver_l2_email: l2.email, approver_l2_name: l2.name,
       note: note,
       due_date: dueDate || null,
+      item_value: itemValue,
+      item_value_currency: itemCurrency,
       items: newRequestItems.map(i => ({ name: i.name, qty: i.qty, unit: i.unit, note: i.note, photo_url: i.photoUrl })),
       status: "pending_l1",
       ext_count: 0,
@@ -774,20 +845,29 @@ function openPassDetail(id) {
           '</div>' +
           '<input type="file" id="secOutFile" accept="image/*" capture="environment" class="hidden" onchange="onSecurityPhoto(this.files[0])">' +
         '</div>' +
-        '<div class="formActions"><button class="btnSuccess" id="btnSecOut" onclick="confirmSecurityOut(\'' + p.id + '\')">✔ ยืนยันตรวจของ & ออกแล้ว</button></div>'
+        '<div class="formActions"><button class="btnSuccess" id="btnSecOut" onclick="confirmSecurityOut(\'' + p.id + '\')">✔ ยืนยันตรวจของ & ออกแล้ว</button></div>' +
+        '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px;">' +
+          reasonDropdownHtml("secOutReject", SECURITY_OUT_REJECT_REASONS) +
+          '<div class="formActions"><button class="btnDanger" onclick="rejectSecurityOut(\'' + p.id + '\')">✕ ปฏิเสธ ไม่อนุญาตนำออก</button></div>' +
+        '</div>'
       );
     }
     if (canConfirmReturn) {
       blocks.push(
         '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">🔍 ตรวจสอบของที่นำกลับ</div>' +
         '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">แจ้งนำกลับ: ' + escapeHtml(p.return_notice_date || "-") + ' เวลา ' + escapeHtml(p.return_notice_time || "-") + '</div>' +
+        (p.return_last_reject_reason ? '<div style="background:#FDECEC;color:var(--danger);font-size:12px;padding:8px 10px;border-radius:6px;margin-bottom:10px;">ครั้งก่อนถูกปฏิเสธ: ' + escapeHtml(p.return_last_reject_reason) + '</div>' : "") +
         '<div class="field"><label>รูปถ่ายยืนยันการตรวจของตอนคืน (รปภ./EHS) *</label>' +
         '<div class="photoUpload" onclick="document.getElementById(\'secRetFile\').click()" id="secRetPreview">' +
           '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
         '</div>' +
         '<input type="file" id="secRetFile" accept="image/*" capture="environment" class="hidden" onchange="onReturnPhoto(this.files[0])">' +
       '</div>' +
-      '<div class="formActions"><button class="btnSuccess" id="btnConfirmReturn" onclick="confirmReturn(\'' + p.id + '\')">✔ ยืนยันคืนของแล้ว</button></div>'
+      '<div class="formActions"><button class="btnSuccess" id="btnConfirmReturn" onclick="confirmReturn(\'' + p.id + '\')">✔ ยืนยันคืนของแล้ว</button></div>' +
+      '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px;">' +
+        reasonDropdownHtml("retReject", RETURN_REJECT_REASONS) +
+        '<div class="formActions"><button class="btnDanger" onclick="rejectReturnCheck(\'' + p.id + '\')">✕ ปฏิเสธ ของไม่ครบ/มีปัญหา</button></div>' +
+      '</div>'
       );
     }
     if (canNotifyReturn) {
@@ -844,17 +924,21 @@ function openPassDetail(id) {
         '<div class="kv"><span class="k">แผนก</span><span>' + escapeHtml(deptNameById(p.requester_dept)) + '</span></div>' +
         '<div class="kv"><span class="k">เบอร์โทร</span><span>' + escapeHtml(p.requester_phone || "-") + '</span></div>' +
         '<div class="kv"><span class="k">วัตถุประสงค์</span><span>' + escapeHtml(p.purpose_th) + ' / ' + escapeHtml(p.purpose_en) + '</span></div>' +
+        '<div style="background:' + (p.requires_return ? "#FFF6E5" : "#E9F7EF") + ';border:1px solid ' + (p.requires_return ? "#F5DBA0" : "#B7EBC6") + ';border-radius:8px;padding:10px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
+          '<span style="font-weight:700;font-size:13px;color:' + (p.requires_return ? "#8A6100" : "#1E7A3D") + ';">' + (p.requires_return ? "🔄 นำออกชั่วคราว · ต้องนำกลับ" : "✅ นำออกถาวร · ไม่ต้องนำกลับ") + '</span>' +
+          (p.requires_return ? '<span style="font-size:12.5px;color:#8A6100;">กำหนดคืน: <strong>' + escapeHtml(p.due_date || "ยังไม่ระบุ") + '</strong></span>' : "") +
+        '</div>' +
         '<div class="kv"><span class="k">ปลายทาง</span><span>' + escapeHtml(p.destination || "-") + '</span></div>' +
         '<div class="kv"><span class="k">ทะเบียนรถ</span><span>' + escapeHtml(p.vehicle_plate || "-") + '</span></div>' +
-        (p.due_date ? '<div class="kv"><span class="k">กำหนดคืน</span><span>' + escapeHtml(p.due_date) + '</span></div>' : "") +
+        '<div class="kv"><span class="k">มูลค่าสินค้า (โดยประมาณ)</span><span>' + fmtMoney(p.item_value, p.item_value_currency) + '</span></div>' +
         (p.note ? '<div class="kv"><span class="k">หมายเหตุ</span><span>' + escapeHtml(p.note) + '</span></div>' : "") +
         (p.return_notice_date ? '<div class="kv"><span class="k">แจ้งนำกลับ</span><span>' + escapeHtml(p.return_notice_date) + ' ' + escapeHtml(p.return_notice_time || "") + '</span></div>' : "") +
       '</div>' +
 
       '<div class="detailSection">' +
         '<h4>ผู้อนุมัติ</h4>' +
-        '<div class="kv"><span class="k">ขั้น 1</span><span>' + escapeHtml(p.approver_l1_name) + (p.l1_approved_at ? " ✔ " + fmtDate(p.l1_approved_at) : "") + '</span></div>' +
-        '<div class="kv"><span class="k">ขั้น 2</span><span>' + escapeHtml(p.approver_l2_name) + (p.l2_approved_at ? " ✔ " + fmtDate(p.l2_approved_at) : "") + '</span></div>' +
+        '<div class="kv"><span class="k">ขั้น 1</span><span>' + escapeHtml(p.approver_l1_name) + (p.l1_approved_at ? " ✔ " + fmtDateTime(p.l1_approved_at) : "") + '</span></div>' +
+        '<div class="kv"><span class="k">ขั้น 2</span><span>' + escapeHtml(p.approver_l2_name) + (p.l2_approved_at ? " ✔ " + fmtDateTime(p.l2_approved_at) : "") + '</span></div>' +
         (p.status === "rejected" ? '<div class="kv"><span class="k">เหตุผลปฏิเสธ</span><span>' + escapeHtml(p.rejected_reason || "-") + '</span></div>' : "") +
       '</div>' +
 
@@ -1113,6 +1197,31 @@ async function confirmSecurityOut(id) {
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
+async function rejectSecurityOut(id) {
+  const reason = getReasonValue("secOutReject");
+  if (!reason) return;
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "rejected",
+      rejected_reason: reason,
+      rejected_by: currentProfile.email,
+      rejected_stage: "security_out",
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ปฏิเสธการนำของออกแล้ว", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "รปภ. ไม่อนุญาตให้นำของออก - " + p.pass_no,
+        "รปภ. ตรวจสอบของที่หน้าประตูแล้วไม่อนุญาตให้นำออกจากโรงงาน เหตุผล: " + reason + " กรุณาติดต่อ รปภ. หรือสร้างคำขอใหม่หากต้องการดำเนินการต่อ",
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
 async function submitReturnNotice(id) {
   const dateEl = document.getElementById("retNoticeDate");
   const timeEl = document.getElementById("retNoticeTime");
@@ -1169,6 +1278,32 @@ async function confirmReturn(id) {
     showToast("ยืนยันคืนของสำเร็จ", "ok");
     _returnPhotoUrl = "";
     closeModal();
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function rejectReturnCheck(id) {
+  const reason = getReasonValue("retReject");
+  if (!reason) return;
+  const p = allPasses.find(x => x.id === id);
+  try {
+    // Stays in "pending_return" — goods were legitimately issued, only the return itself has a problem
+    // that needs the requester's follow-up, so we keep it visible/actionable rather than closing the case.
+    await db.collection("passes").doc(id).update({
+      return_last_reject_reason: reason,
+      return_last_reject_by: currentProfile.email,
+      return_last_reject_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("บันทึกการปฏิเสธการรับคืนแล้ว", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "การนำของกลับมีปัญหา โปรดตรวจสอบ - " + p.pass_no,
+        "รปภ./EHS ตรวจของที่นำกลับแล้วพบปัญหา ไม่สามารถยืนยันรับคืนได้ เหตุผล: " + reason + " กรุณาตรวจสอบและแจ้งนำของกลับใหม่อีกครั้งเมื่อพร้อม",
+        p.pass_no
+      );
+    }
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
