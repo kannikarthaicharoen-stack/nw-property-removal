@@ -937,8 +937,8 @@ function openPassDetail(id) {
 
       '<div class="detailSection">' +
         '<h4>ผู้อนุมัติ</h4>' +
-        '<div class="kv"><span class="k">ขั้น 1</span><span>' + escapeHtml(p.approver_l1_name) + (p.l1_approved_at ? " ✔ " + fmtDateTime(p.l1_approved_at) : "") + '</span></div>' +
-        '<div class="kv"><span class="k">ขั้น 2</span><span>' + escapeHtml(p.approver_l2_name) + (p.l2_approved_at ? " ✔ " + fmtDateTime(p.l2_approved_at) : "") + '</span></div>' +
+        '<div class="kv"><span class="k">ขั้น 1</span><span>' + (p.l1_approved_at ? 'อนุมัติโดย/Approved by ' + escapeHtml(p.approver_l1_name) + ' · ' + fmtDateTime(p.l1_approved_at) : escapeHtml(p.approver_l1_name) + ' (รอดำเนินการ)') + '</span></div>' +
+        '<div class="kv"><span class="k">ขั้น 2</span><span>' + (p.l2_approved_at ? 'อนุมัติโดย/Approved by ' + escapeHtml(p.approver_l2_name) + ' · ' + fmtDateTime(p.l2_approved_at) : escapeHtml(p.approver_l2_name) + ' (รอดำเนินการ)') + '</span></div>' +
         (p.status === "rejected" ? '<div class="kv"><span class="k">เหตุผลปฏิเสธ</span><span>' + escapeHtml(p.rejected_reason || "-") + '</span></div>' : "") +
       '</div>' +
 
