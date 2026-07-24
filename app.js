@@ -63,7 +63,7 @@ async function uploadToCloudinary(file) {
 }
 
 // ---------- Static reference data (seeded to Firestore on first admin login) ----------
-const DEPARTMENTS = [
+const DEPARTMENTS_DEFAULT = [
   { id: "administration", name_th: "Administration", l1_email: "thippawan_sonmahachan@natureworkspla.com", l1_name: "Thippawan Sonmahachan" },
   { id: "ehs", name_th: "EHS", l1_email: "kulitsara_kralam@natureworkspla.com", l1_name: "Kulitsara Kralam" },
   { id: "fermentation_lab", name_th: "Fermentation Lab", l1_email: "nantana_intanil@natureworkspla.com", l1_name: "Nantana Intanil" },
@@ -74,6 +74,9 @@ const DEPARTMENTS = [
   { id: "qa_qc", name_th: "QA/QC", l1_email: "nantana_intanil@natureworkspla.com", l1_name: "Nantana Intanil" },
   { id: "warehouse", name_th: "Warehouse", l1_email: "puthapon_sookjit@natureworkspla.com", l1_name: "Puthapon Sookjit" }
 ];
+// Live, possibly Firestore-overridden copy — this is what the rest of the app reads from.
+// Admin Settings edits update Firestore AND this array in memory (see loadDynamicConfig()).
+let DEPARTMENTS = DEPARTMENTS_DEFAULT.map(d => ({ ...d }));
 
 const REMOVAL_TYPES = [
   { id: "repair", th: "ซ่อม", en: "Repair", requires_return: true },
@@ -87,40 +90,67 @@ const REMOVAL_TYPES = [
 
 const UNITS = ["ชิ้น", "กล่อง", "ม้วน", "เครื่อง", "ใบ", "ชุด", "อัน", "กก."];
 
-const L2_APPROVERS = [
+const L2_APPROVERS_DEFAULT = [
   { email: "mike_bassett@natureworksllc.com", name: "Mike Bassett" },
   { email: "sirisak_charoenkitpeeti@natureworkspla.com", name: "Sirisak Charoenkitpeeti" },
   { email: "sippakorn_rattanaphun@natureworkspla.com", name: "Sippakorn Rattanaphun" }
 ];
+// Live, possibly Firestore-overridden copy — this is what the rest of the app reads from.
+let L2_APPROVERS = L2_APPROVERS_DEFAULT.map(a => ({ ...a }));
 
 // Recipients notified whenever a requester submits a Return Notice (security + EHS return-confirmer group)
-const RETURN_NOTICE_RECIPIENTS = [
-  { email: "nbc_guardhouse@natureworkspla.com", name: "รปภ. (Guardhouse)" },
+// EHS return-confirmer group (also used as the final "EHS Manager" closing recipients)
+const EHS_GROUP = [
   { email: "kulitsara_kralam@natureworkspla.com", name: "Kulitsara Kralam" },
   { email: "kannikar_thaicharoen@natureworkspla.com", name: "Kannikar Thaicharoen (NW)" },
   { email: "naowadee_kotwit@natureworkspla.com", name: "Naowadee Kotwit" },
   { email: "monthean_sathirayakorn@natureworkspla.com", name: "Monthean Sathirayakorn" }
 ];
+// Recipients notified when goods are handed to Security/EHS for gate-in inspection
+const RETURN_NOTICE_RECIPIENTS = [
+  { email: "nbc_guardhouse@natureworkspla.com", name: "รปภ. (Guardhouse)" },
+  ...EHS_GROUP
+];
 
 // email(lowercase) -> profile
+// NOTE: dept_manager and l2_approver roles are now derived DYNAMICALLY at login time by matching the
+// logging-in email against the live DEPARTMENTS / L2_APPROVERS lists (which Test Admin can edit from the
+// Admin Settings tab, backed by Firestore). This directory now only covers roles that are NOT tied to an
+// editable list: Test Admin, Admin (+return-confirmer), and Security.
 const APPROVER_DIRECTORY = {
   "kannikar.thaicharoen@gmail.com": { name: "Kannikar Thaicharoen", roles: ["admin", "test_admin", "return_confirmer"], dashboard: "all" },
   "kannikar_thaicharoen@natureworkspla.com": { name: "Kannikar Thaicharoen (NW)", roles: ["admin", "test_admin", "return_confirmer"], dashboard: "all" },
-  "kulitsara_kralam@natureworkspla.com": { name: "Kulitsara Kralam", roles: ["dept_manager", "admin", "return_confirmer"], department: "ehs", dashboard: "all" },
+  "kulitsara_kralam@natureworkspla.com": { name: "Kulitsara Kralam", roles: ["admin", "return_confirmer"], dashboard: "all" },
   "naowadee_kotwit@natureworkspla.com": { name: "Naowadee Kotwit", roles: ["admin", "return_confirmer"], dashboard: "all" },
   "monthean_sathirayakorn@natureworkspla.com": { name: "Monthean Sathirayakorn", roles: ["admin", "return_confirmer"], dashboard: "all" },
-  "mike_bassett@natureworksllc.com": { name: "Mike Bassett", roles: ["l2_approver"], dashboard: "none" },
-  "sirisak_charoenkitpeeti@natureworkspla.com": { name: "Sirisak Charoenkitpeeti", roles: ["l2_approver"], dashboard: "none" },
-  "sippakorn_rattanaphun@natureworkspla.com": { name: "Sippakorn Rattanaphun", roles: ["l2_approver"], dashboard: "none" },
-  "thippawan_sonmahachan@natureworkspla.com": { name: "Thippawan Sonmahachan", roles: ["dept_manager"], department: "administration", dashboard: "own_dept" },
-  "nantana_intanil@natureworkspla.com": { name: "Nantana Intanil", roles: ["dept_manager"], department: ["fermentation_lab", "qa_qc"], dashboard: "own_dept" },
-  "waron_sasipaworamet@natureworkspla.com": { name: "Waron Sasipaworamet", roles: ["dept_manager"], department: "production", dashboard: "own_dept" },
-  "warakorn_nuntaya@natureworkspla.com": { name: "Warakorn Nuntaya", roles: ["dept_manager"], department: "maintenance_reliability", dashboard: "own_dept" },
-  "tassaneewan_surapraseart@natureworkspla.com": { name: "Tassaneewan Surapraseart", roles: ["dept_manager"], department: "hr", dashboard: "own_dept" },
-  "puthapon_sookjit@natureworkspla.com": { name: "Puthapon Sookjit", roles: ["dept_manager"], department: "warehouse", dashboard: "own_dept" },
-  "amornthep_phueakphibool@natureworkspla.com": { name: "Amornthep Phueakphibool", roles: ["dept_manager"], department: "it", dashboard: "own_dept" },
   "nbc_guardhouse@natureworkspla.com": { name: "รปภ. (Guardhouse)", roles: ["security"], dashboard: "none" }
 };
+
+// Fetch Firestore overrides for DEPARTMENTS / L2_APPROVERS and apply them to the live arrays above.
+// Called once at startup; awaited before resolving a user's role so newly-added/changed approvers get
+// correct permissions immediately on their next login — no code change or redeploy needed.
+async function loadDynamicConfig() {
+  try {
+    const deptSnap = await db.collection("departments").get();
+    deptSnap.forEach(doc => {
+      const data = doc.data();
+      const target = DEPARTMENTS.find(d => d.id === doc.id);
+      if (target) {
+        if (data.l1_email) target.l1_email = data.l1_email.toLowerCase();
+        if (data.l1_name) target.l1_name = data.l1_name;
+      }
+    });
+  } catch (e) { console.error("Failed to load departments config:", e); }
+
+  try {
+    const l2Snap = await db.collection("l2Approvers").get();
+    if (!l2Snap.empty) {
+      L2_APPROVERS = l2Snap.docs.map(doc => ({ email: (doc.data().email || doc.id).toLowerCase(), name: doc.data().name || doc.id }));
+    }
+  } catch (e) { console.error("Failed to load l2Approvers config:", e); }
+}
+
+const configLoadedPromise = loadDynamicConfig();
 
 const SECURITY_OUT_REJECT_REASONS = [
   "ของไม่ตรงกับรายการที่ขออนุมัติ",
@@ -142,8 +172,11 @@ const STATUS_LABEL = {
   pending_l2: "รออนุมัติ (ขั้น 2)",
   approved: "อนุมัติ",
   issued: "ออกแล้ว",
-  pending_return: "แจ้งนำกลับ (รอตรวจสอบ)",
-  returned: "คืนแล้ว",
+  return_pending_requester: "รอผู้ขอตรวจสอบของนำเข้า",
+  return_pending_security: "รอ รปภ./EHS ตรวจสอบของนำเข้า",
+  return_pending_l1: "รอผจก.แผนกอนุมัติปิดคำขอ",
+  return_pending_ehs: "รอ EHS Manager ปิดคำขอ",
+  returned: "ปิดคำขอแล้ว (คืนของเรียบร้อย)",
   rejected: "ปฏิเสธ"
 };
 
@@ -311,19 +344,8 @@ auth.onAuthStateChanged(async (user) => {
   if (user) {
     currentUser = user;
     const email = (user.email || "").toLowerCase();
-    let name = user.displayName || email;
-    const dirEntry = APPROVER_DIRECTORY[email];
-    if (dirEntry) {
-      currentProfile = { email, name: dirEntry.name, roles: dirEntry.roles, department: dirEntry.department, dashboard: dirEntry.dashboard };
-    } else {
-      // general requester — try to load their signup name
-      let displayName = name;
-      try {
-        const udoc = await db.collection("users").doc(email).get();
-        if (udoc.exists) displayName = udoc.data().name || displayName;
-      } catch (e) {}
-      currentProfile = { email, name: displayName, roles: ["requester"], department: null, dashboard: "none" };
-    }
+    await configLoadedPromise; // make sure Admin-edited departments/L2 approvers are loaded before resolving role
+    currentProfile = await resolveUserProfile(email, user.displayName);
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("appShell").style.display = "flex";
     document.getElementById("ubName").textContent = currentProfile.name;
@@ -339,6 +361,42 @@ auth.onAuthStateChanged(async (user) => {
     document.getElementById("appShell").style.display = "none";
   }
 });
+
+async function resolveUserProfile(email, authDisplayName) {
+  const dirEntry = APPROVER_DIRECTORY[email];
+  let roles = dirEntry ? [...dirEntry.roles] : [];
+  let department = dirEntry ? dirEntry.department : null;
+  let dashboard = dirEntry ? dirEntry.dashboard : "none";
+  let name = dirEntry ? dirEntry.name : null;
+
+  // Dynamic dept-manager check — source of truth is the live DEPARTMENTS list (editable in Admin Settings)
+  const deptMatches = DEPARTMENTS.filter(d => d.l1_email === email);
+  if (deptMatches.length > 0) {
+    roles.push("dept_manager");
+    department = deptMatches.length === 1 ? deptMatches[0].id : deptMatches.map(d => d.id);
+    if (!dashboard || dashboard === "none") dashboard = "own_dept";
+    if (!name) name = deptMatches[0].l1_name;
+  }
+
+  // Dynamic L2-approver check — source of truth is the live L2_APPROVERS list (editable in Admin Settings)
+  const l2Match = L2_APPROVERS.find(a => a.email === email);
+  if (l2Match) {
+    roles.push("l2_approver");
+    if (!name) name = l2Match.name;
+  }
+
+  if (roles.length === 0) {
+    // general requester — try to load their signup name
+    let displayName = authDisplayName || email;
+    try {
+      const udoc = await db.collection("users").doc(email).get();
+      if (udoc.exists) displayName = udoc.data().name || displayName;
+    } catch (e) {}
+    return { email, name: displayName, roles: ["requester"], department: null, dashboard: "none" };
+  }
+
+  return { email, name: name || authDisplayName || email, roles: [...new Set(roles)], department, dashboard };
+}
 
 function roleLabel(roles) {
   if (roles.includes("test_admin")) return "Test Admin";
@@ -515,11 +573,15 @@ function renderPassesView() {
 
   if (currentSubFilter === "pending_approval") {
     const depts = visibleDeptIdsForCurrentUser();
-    visible = allPasses.filter(p => (p.status === "pending_l1" || p.ext_status === "pending_l1") && (depts.includes(p.requester_dept) || roles.includes("test_admin")));
+    const ehsMgrEmail = (DEPARTMENTS.find(d => d.id === "ehs") || {}).l1_email;
+    visible = allPasses.filter(p =>
+      ((p.status === "pending_l1" || p.ext_status === "pending_l1" || p.status === "return_pending_l1") && (depts.includes(p.requester_dept) || roles.includes("test_admin"))) ||
+      (p.status === "return_pending_ehs" && (currentProfile.email === ehsMgrEmail || roles.includes("test_admin")))
+    );
   } else if (currentSubFilter === "my_approval") {
     visible = allPasses.filter(p => (p.status === "pending_l2" || p.ext_status === "pending_l2") && (p.approver_l2_email === currentProfile.email || roles.includes("test_admin")));
   } else if (currentSubFilter === "security_check") {
-    visible = allPasses.filter(p => p.status === "approved" || (p.status === "pending_return" && p.requires_return));
+    visible = allPasses.filter(p => p.status === "approved" || (p.status === "return_pending_security" && p.requires_return));
   }
 
   const search = (document.getElementById("passSearch") ? document.getElementById("passSearch").value : "").trim().toLowerCase();
@@ -564,7 +626,7 @@ function passCardHtml(p) {
   const badgeClass = overdue ? "overdue" : p.status;
   const badgeText = overdue ? "Overdue" : (STATUS_LABEL[p.status] || p.status);
   const rt = removalTypeById(p.removal_type);
-  const extBadge = p.ext_status ? '<span class="badge pending_return" style="margin-left:6px;">ขอต่ออายุ ครั้งที่ ' + ((p.ext_count || 0) + 1) + '</span>' : "";
+  const extBadge = p.ext_status ? '<span class="badge ext-badge" style="margin-left:6px;">ขอต่ออายุ ครั้งที่ ' + ((p.ext_count || 0) + 1) + '</span>' : "";
   return '<div class="passCard" onclick="openPassDetail(\'' + p.id + '\')">' +
     '<div class="row1">' +
     '<div>' +
@@ -581,7 +643,7 @@ function passCardHtml(p) {
 
 function isOverdue(p) {
   if (!p.requires_return) return false;
-  if (p.status !== "issued" && p.status !== "pending_return") return false;
+  if (p.status !== "issued") return false;
   if (!p.due_date) return false;
   return new Date(p.due_date) < new Date(new Date().toDateString());
 }
@@ -819,12 +881,16 @@ function openPassDetail(id) {
   const canApproveL1 = (roles.includes("dept_manager") && visibleDeptIdsForCurrentUser().includes(p.requester_dept)) || isTestAdmin;
   const canApproveL2 = (roles.includes("l2_approver") && p.approver_l2_email === currentProfile.email) || isTestAdmin;
   const canSecurityOut = (roles.includes("security") || isTestAdmin) && p.status === "approved";
-  const canConfirmReturn = (roles.includes("return_confirmer") || roles.includes("security") || isTestAdmin) && p.status === "pending_return" && p.requires_return;
+  const canSelfCheckReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "return_pending_requester" && p.requires_return;
+  const canConfirmReturn = (roles.includes("return_confirmer") || roles.includes("security") || isTestAdmin) && p.status === "return_pending_security" && p.requires_return;
+  const ehsManagerInfo = DEPARTMENTS.find(d => d.id === "ehs");
+  const canApproveReturnL1 = ((roles.includes("dept_manager") && visibleDeptIdsForCurrentUser().includes(p.requester_dept)) || isTestAdmin) && p.status === "return_pending_l1";
+  const canApproveReturnEhs = ((currentProfile.email === ehsManagerInfo.l1_email) || isTestAdmin) && p.status === "return_pending_ehs";
   const canNotifyReturn = (p.requester_email === currentProfile.email || isTestAdmin) && p.status === "issued" && p.requires_return && !p.ext_status;
   const canApproveExtL1 = (canApproveL1) && p.ext_status === "pending_l1";
   const canApproveExtL2 = (canApproveL2) && p.ext_status === "pending_l2";
   const canRequestExtension = (p.requester_email === currentProfile.email || isTestAdmin) && !roles.includes("security") && p.requires_return &&
-    (p.status === "issued" || p.status === "pending_return") && !p.ext_status && (p.ext_count || 0) < 3;
+    p.status === "issued" && !p.ext_status && (p.ext_count || 0) < 3;
 
   const blocks = [];
   if (canApproveExtL1 || canApproveExtL2) {
@@ -852,6 +918,19 @@ function openPassDetail(id) {
         '</div>'
       );
     }
+    if (canSelfCheckReturn) {
+      blocks.push(
+        '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">📦 ตรวจสอบของที่นำเข้ามา (ก่อนส่งต่อ รปภ.)</div>' +
+        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">แจ้งนำกลับไว้: ' + escapeHtml(p.return_notice_date || "-") + ' เวลา ' + escapeHtml(p.return_notice_time || "-") + '</div>' +
+        '<div class="field"><label>รูปถ่ายยืนยันการตรวจสอบของนำเข้า *</label>' +
+        '<div class="photoUpload" onclick="document.getElementById(\'selfCheckFile\').click()" id="selfCheckPreview">' +
+          '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>' +
+        '</div>' +
+        '<input type="file" id="selfCheckFile" accept="image/*" capture="environment" class="hidden" onchange="onSelfCheckPhoto(this.files[0])">' +
+      '</div>' +
+      '<div class="formActions"><button class="btnSuccess" onclick="submitSelfCheckReturn(\'' + p.id + '\')">✔ ตรวจสอบแล้ว ส่งต่อให้ รปภ.</button></div>'
+      );
+    }
     if (canConfirmReturn) {
       blocks.push(
         '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">🔍 ตรวจสอบของที่นำกลับ</div>' +
@@ -868,6 +947,28 @@ function openPassDetail(id) {
         reasonDropdownHtml("retReject", RETURN_REJECT_REASONS) +
         '<div class="formActions"><button class="btnDanger" onclick="rejectReturnCheck(\'' + p.id + '\')">✕ ปฏิเสธ ของไม่ครบ/มีปัญหา</button></div>' +
       '</div>'
+      );
+    }
+    if (canApproveReturnL1) {
+      blocks.push(
+        '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">📋 รับทราบ & อนุมัติปิดคำขอ (ผจก.แผนก)</div>' +
+        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">รปภ./EHS ตรวจของแล้ว รอท่านรับทราบก่อนส่งต่อ EHS Manager ปิดคำขอ</div>' +
+        '<div class="field"><label>เหตุผล (กรณีส่งกลับให้ตรวจใหม่)</label><input type="text" id="rejReturnL1Reason" placeholder="ระบุเหตุผล..."></div>' +
+        '<div class="formActions">' +
+          '<button class="btnSuccess" onclick="approveReturnL1(\'' + p.id + '\')">✔ รับทราบ & ส่งต่อ EHS Manager</button>' +
+          '<button class="btnDanger" onclick="rejectReturnL1(\'' + p.id + '\')">✕ ส่งกลับให้ตรวจใหม่</button>' +
+        '</div>'
+      );
+    }
+    if (canApproveReturnEhs) {
+      blocks.push(
+        '<div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px;">✅ อนุมัติปิดคำขอ (EHS Manager) — ขั้นตอนสุดท้าย</div>' +
+        '<div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">ผจก.แผนกรับทราบแล้ว รอท่านอนุมัติปิดคำขอเป็นขั้นตอนสุดท้าย</div>' +
+        '<div class="field"><label>เหตุผล (กรณีส่งกลับให้พิจารณาใหม่)</label><input type="text" id="rejReturnEhsReason" placeholder="ระบุเหตุผล..."></div>' +
+        '<div class="formActions">' +
+          '<button class="btnSuccess" onclick="approveReturnEhs(\'' + p.id + '\')">✔ อนุมัติปิดคำขอ</button>' +
+          '<button class="btnDanger" onclick="rejectReturnEhs(\'' + p.id + '\')">✕ ส่งกลับให้พิจารณาใหม่</button>' +
+        '</div>'
       );
     }
     if (canNotifyReturn) {
@@ -903,8 +1004,11 @@ function openPassDetail(id) {
   if (p.security_out_photo_url) {
     securityPhotosHtml += '<div class="itemRowView"><img src="' + p.security_out_photo_url + '" onclick="openLightbox(\'' + p.security_out_photo_url + '\')"><div class="info"><div class="n">รูปตอนออก (Security)</div><div class="m">' + fmtDate(p.security_out_at) + '</div></div></div>';
   }
+  if (p.requester_check_photo_url) {
+    securityPhotosHtml += '<div class="itemRowView"><img src="' + p.requester_check_photo_url + '" onclick="openLightbox(\'' + p.requester_check_photo_url + '\')"><div class="info"><div class="n">รูปตอนผู้ขอตรวจสอบของนำเข้า</div><div class="m">' + fmtDate(p.requester_check_at) + '</div></div></div>';
+  }
   if (p.return_photo_url) {
-    securityPhotosHtml += '<div class="itemRowView"><img src="' + p.return_photo_url + '" onclick="openLightbox(\'' + p.return_photo_url + '\')"><div class="info"><div class="n">รูปตอนคืน</div><div class="m">' + fmtDate(p.return_at) + '</div></div></div>';
+    securityPhotosHtml += '<div class="itemRowView"><img src="' + p.return_photo_url + '" onclick="openLightbox(\'' + p.return_photo_url + '\')"><div class="info"><div class="n">รูปตอนคืน (รปภ./EHS)</div><div class="m">' + fmtDate(p.return_at) + '</div></div></div>';
   }
 
   const modalHtml =
@@ -1158,7 +1262,7 @@ async function rejectPass(id, stage) {
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
-let _secOutPhotoUrl = "", _returnPhotoUrl = "";
+let _secOutPhotoUrl = "", _returnPhotoUrl = "", _selfCheckPhotoUrl = "";
 
 async function onSecurityPhoto(file) {
   if (!file) return;
@@ -1231,21 +1335,58 @@ async function submitReturnNotice(id) {
   const p = allPasses.find(x => x.id === id);
   try {
     await db.collection("passes").doc(id).update({
-      status: "pending_return",
+      status: "return_pending_requester",
       return_notice_date: date,
       return_notice_time: time,
       return_notice_by: currentProfile.email,
       return_notice_at: firebase.firestore.FieldValue.serverTimestamp(),
       updated_at: firebase.firestore.FieldValue.serverTimestamp()
     });
-    showToast("แจ้งนำของกลับสำเร็จ รอ รปภ./EHS ตรวจของ", "ok");
+    showToast("แจ้งนำของกลับสำเร็จ เมื่อของถึงแล้วกลับมาตรวจสอบ+แนบรูปในระบบอีกครั้ง", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "แจ้งนำของกลับสำเร็จ - " + p.pass_no,
+        "แจ้งนำของกลับวันที่ " + date + " เวลาประมาณ " + time + " เรียบร้อย เมื่อของถึงโรงงานแล้ว กรุณากลับเข้าระบบเพื่อตรวจสอบของและแนบรูปยืนยันก่อนส่งต่อให้ รปภ./EHS ตรวจสอบ",
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function onSelfCheckPhoto(file) {
+  if (!file) return;
+  document.getElementById("selfCheckPreview").innerHTML = '<div class="icon">⏳</div><div class="lbl">กำลังอัปโหลด...</div>';
+  try {
+    _selfCheckPhotoUrl = await uploadToCloudinary(file);
+    document.getElementById("selfCheckPreview").innerHTML = '<img src="' + _selfCheckPhotoUrl + '">';
+  } catch (e) {
+    showToast("อัปโหลดรูปไม่สำเร็จ", "err");
+    document.getElementById("selfCheckPreview").innerHTML = '<div class="icon">📷</div><div class="lbl">ถ่ายรูปยืนยัน</div>';
+  }
+}
+
+async function submitSelfCheckReturn(id) {
+  if (!_selfCheckPhotoUrl) return showToast("กรุณาถ่ายรูปยืนยันก่อน", "err");
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "return_pending_security",
+      requester_check_photo_url: _selfCheckPhotoUrl,
+      requester_check_by: currentProfile.email,
+      requester_check_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ยืนยันตรวจสอบของนำเข้าแล้ว ส่งต่อให้ รปภ./EHS ตรวจสอบ", "ok");
+    _selfCheckPhotoUrl = "";
     closeModal();
     if (p) {
       RETURN_NOTICE_RECIPIENTS.forEach(r => {
         sendNotifyEmail(
           r.email, r.name,
-          "แจ้งนำของกลับ - โปรดตรวจของ - " + p.pass_no,
-          p.requester_name + " (" + deptNameById(p.requester_dept) + ") แจ้งนำของกลับเข้าโรงงาน วันที่ " + date + " เวลาประมาณ " + time + " กรุณาตรวจของและถ่ายรูปยืนยันในระบบ (Tab \"Security Check\")",
+          "โปรดตรวจของที่นำกลับ - " + p.pass_no,
+          p.requester_name + " (" + deptNameById(p.requester_dept) + ") ตรวจสอบของที่นำเข้าเบื้องต้นแล้ว กรุณาตรวจของและถ่ายรูปยืนยันในระบบ (Tab \"Security Check\")",
           p.pass_no
         );
       });
@@ -1267,17 +1408,145 @@ async function onReturnPhoto(file) {
 
 async function confirmReturn(id) {
   if (!_returnPhotoUrl) return showToast("กรุณาถ่ายรูปยืนยันก่อน", "err");
+  const p = allPasses.find(x => x.id === id);
   try {
     await db.collection("passes").doc(id).update({
-      status: "returned",
+      status: "return_pending_l1",
       return_photo_url: _returnPhotoUrl,
       return_by: currentProfile.email,
       return_at: firebase.firestore.FieldValue.serverTimestamp(),
       updated_at: firebase.firestore.FieldValue.serverTimestamp()
     });
-    showToast("ยืนยันคืนของสำเร็จ", "ok");
+    showToast("ยืนยันตรวจของแล้ว ส่งต่อให้ผจก.แผนกรับทราบและปิดคำขอ", "ok");
     _returnPhotoUrl = "";
     closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.approver_l1_email, p.approver_l1_name,
+        "รอรับทราบและอนุมัติปิดคำขอ - " + p.pass_no,
+        "รปภ./EHS ตรวจสอบของที่นำกลับของ " + p.requester_name + " เรียบร้อยแล้ว กรุณาเข้าระบบเพื่อรับทราบและอนุมัติปิดคำขอ",
+        p.pass_no
+      );
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "ผ่านการตรวจของแล้ว - " + p.pass_no,
+        "รปภ./EHS ตรวจสอบของที่นำกลับเรียบร้อยแล้ว อยู่ระหว่างรอผจก.แผนกและ EHS Manager อนุมัติปิดคำขอ",
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function approveReturnL1(id) {
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "return_pending_ehs",
+      return_l1_approved_by: currentProfile.email,
+      return_l1_approved_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("รับทราบแล้ว ส่งต่อให้ EHS Manager ปิดคำขอ", "ok");
+    closeModal();
+    if (p) {
+      const ehsMgr = DEPARTMENTS.find(d => d.id === "ehs");
+      sendNotifyEmail(
+        ehsMgr.l1_email, ehsMgr.l1_name,
+        "รอปิดคำขอ (ขั้นตอนสุดท้าย) - " + p.pass_no,
+        "คำขอนำของกลับของ " + p.requester_name + " ผ่านการรับทราบจาก " + p.approver_l1_name + " แล้ว รอท่านอนุมัติปิดคำขอเป็นขั้นตอนสุดท้าย",
+        p.pass_no
+      );
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "ใกล้ปิดคำขอแล้ว - " + p.pass_no,
+        "คำขอนำของกลับผ่านการรับทราบจากผจก.แผนกแล้ว รอ EHS Manager อนุมัติปิดคำขอขั้นตอนสุดท้าย",
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function rejectReturnL1(id) {
+  const reasonEl = document.getElementById("rejReturnL1Reason");
+  const reason = reasonEl ? reasonEl.value.trim() : "";
+  if (!reason) return showToast("กรุณาระบุเหตุผล", "err");
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "return_pending_security",
+      return_l1_reject_reason: reason,
+      return_l1_reject_by: currentProfile.email,
+      return_l1_reject_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ส่งกลับให้ รปภ./EHS ตรวจสอบใหม่แล้ว", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.requester_email, p.requester_name,
+        "คำขอถูกส่งกลับให้ตรวจสอบใหม่ - " + p.pass_no,
+        "ผจก.แผนกส่งคำขอกลับให้ รปภ./EHS ตรวจสอบใหม่ เหตุผล: " + reason,
+        p.pass_no
+      );
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function approveReturnEhs(id) {
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "returned",
+      return_closed_by: currentProfile.email,
+      return_closed_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ปิดคำขอสมบูรณ์", "ok");
+    closeModal();
+    if (p) {
+      const closingRecipients = [
+        { email: p.requester_email, name: p.requester_name },
+        { email: p.approver_l1_email, name: p.approver_l1_name },
+        ...EHS_GROUP
+      ];
+      const seen = {};
+      closingRecipients.forEach(r => {
+        if (!r.email || seen[r.email.toLowerCase()]) return;
+        seen[r.email.toLowerCase()] = true;
+        sendNotifyEmail(
+          r.email, r.name,
+          "ปิดคำขอสมบูรณ์ - " + p.pass_no,
+          "ของนำเข้าเรียบร้อย ตรวจสอบครบทุกขั้นตอนแล้ว ปิดใบคำขอ " + p.pass_no + " เรียบร้อย",
+          p.pass_no
+        );
+      });
+    }
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function rejectReturnEhs(id) {
+  const reasonEl = document.getElementById("rejReturnEhsReason");
+  const reason = reasonEl ? reasonEl.value.trim() : "";
+  if (!reason) return showToast("กรุณาระบุเหตุผล", "err");
+  const p = allPasses.find(x => x.id === id);
+  try {
+    await db.collection("passes").doc(id).update({
+      status: "return_pending_l1",
+      return_ehs_reject_reason: reason,
+      return_ehs_reject_by: currentProfile.email,
+      return_ehs_reject_at: firebase.firestore.FieldValue.serverTimestamp(),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("ส่งกลับให้ผจก.แผนกพิจารณาใหม่แล้ว", "ok");
+    closeModal();
+    if (p) {
+      sendNotifyEmail(
+        p.approver_l1_email, p.approver_l1_name,
+        "คำขอถูกส่งกลับให้พิจารณาใหม่ - " + p.pass_no,
+        "EHS Manager ส่งคำขอกลับให้พิจารณาใหม่ เหตุผล: " + reason,
+        p.pass_no
+      );
+    }
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
@@ -1286,7 +1555,7 @@ async function rejectReturnCheck(id) {
   if (!reason) return;
   const p = allPasses.find(x => x.id === id);
   try {
-    // Stays in "pending_return" — goods were legitimately issued, only the return itself has a problem
+    // Stays in "return_pending_security" — goods were legitimately issued, only the return itself has a problem
     // that needs the requester's follow-up, so we keep it visible/actionable rather than closing the case.
     await db.collection("passes").doc(id).update({
       return_last_reject_reason: reason,
@@ -1307,18 +1576,20 @@ async function rejectReturnCheck(id) {
   } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
 
+const RETURN_PIPELINE_STATUSES = ["return_pending_requester", "return_pending_security", "return_pending_l1", "return_pending_ehs"];
+
 function renderTrackingView() {
   const el = document.getElementById("view-tracking");
-  let list = getVisiblePasses(allPasses).filter(p => p.requires_return && (p.status === "issued" || p.status === "pending_return"));
+  let list = getVisiblePasses(allPasses).filter(p => p.requires_return && (p.status === "issued" || RETURN_PIPELINE_STATUSES.includes(p.status)));
   const overdue = list.filter(isOverdue);
   const notNotified = list.filter(p => p.status === "issued" && !isOverdue(p));
-  const awaitingInspection = list.filter(p => p.status === "pending_return" && !isOverdue(p));
+  const closingInProgress = list.filter(p => RETURN_PIPELINE_STATUSES.includes(p.status));
   const returnedCount = getVisiblePasses(allPasses).filter(p => p.requires_return && p.status === "returned").length;
 
   let html = '<div class="trackStats" style="grid-template-columns:repeat(4,1fr);">' +
     '<div class="statCard danger"><div class="num">' + overdue.length + '</div><div class="lbl">Overdue</div></div>' +
     '<div class="statCard warn"><div class="num">' + notNotified.length + '</div><div class="lbl">ยังไม่แจ้งคืน</div></div>' +
-    '<div class="statCard"><div class="num">' + awaitingInspection.length + '</div><div class="lbl">รอตรวจสอบ</div></div>' +
+    '<div class="statCard"><div class="num">' + closingInProgress.length + '</div><div class="lbl">กำลังปิดคำขอ</div></div>' +
     '<div class="statCard"><div class="num" style="color:var(--success)">' + returnedCount + '</div><div class="lbl">คืนแล้ว</div></div>' +
     '</div>';
 
@@ -1344,8 +1615,8 @@ function renderDashboardView() {
   const issued = list.filter(p => p.status === "issued").length;
   const overdueCount = list.filter(isOverdue).length;
 
-  const statusOrder = ["pending_l1", "pending_l2", "approved", "issued", "pending_return", "returned", "rejected"];
-  const statusColors = { pending_l1: "#E2A400", pending_l2: "#E07A1F", approved: "#2F6FED", issued: "#1F497D", pending_return: "#7C5CE0", returned: "#2E8B57", rejected: "#D64545" };
+  const statusOrder = ["pending_l1", "pending_l2", "approved", "issued", "return_pending_requester", "return_pending_security", "return_pending_l1", "return_pending_ehs", "returned", "rejected"];
+  const statusColors = { pending_l1: "#E2A400", pending_l2: "#E07A1F", approved: "#2F6FED", issued: "#1F497D", return_pending_requester: "#B45309", return_pending_security: "#7C5CE0", return_pending_l1: "#0369A1", return_pending_ehs: "#15803D", returned: "#2E8B57", rejected: "#D64545" };
   const statusCounts = {};
   statusOrder.forEach(s => statusCounts[s] = list.filter(p => p.status === s).length);
   const maxStatus = Math.max(1, Math.max.apply(null, Object.values(statusCounts)));
@@ -1394,15 +1665,107 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+let l2ApproverDraftRows = []; // temp unsaved new-row placeholders, [{tempId, name, email}]
+
 function renderAdminView() {
   const el = document.getElementById("view-admin");
   el.innerHTML =
     '<div class="formCard">' +
-      '<h3 style="margin-top:0;">ข้อมูลอ้างอิงระบบ (Read-only)</h3>' +
-      '<p style="font-size:13px;color:var(--muted);">แผนก, ผู้อนุมัติ, ประเภทการนำออก, และหน่วยนับ ถูกกำหนดไว้ในตัวแอปโดยตรง หากต้องการแก้ไขรายชื่อผู้อนุมัติหรือแผนก แจ้ง Developer เพื่อแก้ไขใน app.js</p>' +
-      '<h4>แผนก & ผู้อนุมัติขั้น 1</h4>' +
-      DEPARTMENTS.map(d => '<div class="kv"><span class="k">' + d.name_th + '</span><span>' + d.l1_name + '</span></div>').join("") +
-      '<h4 style="margin-top:16px;">ผู้อนุมัติขั้น 2</h4>' +
-      L2_APPROVERS.map(a => '<div class="kv"><span class="k">' + a.name + '</span><span>' + a.email + '</span></div>').join("") +
+      '<h3 style="margin-top:0;">ผู้อนุมัติขั้น 1 ตามแผนก</h3>' +
+      '<p style="font-size:12.5px;color:var(--muted);margin-top:-6px;">แก้ไขชื่อ/Email แล้วกด Save ต่อแถว — มีผลทันทีตั้งแต่ Login ครั้งถัดไปของบุคคลนั้น ไม่ต้องแก้ Code</p>' +
+      DEPARTMENTS.map(d => deptApproverRowHtml(d)).join("") +
+    '</div>' +
+    '<div class="formCard">' +
+      '<h3 style="margin-top:0;">ผู้อนุมัติขั้น 2</h3>' +
+      '<p style="font-size:12.5px;color:var(--muted);margin-top:-6px;">รายชื่อที่ผู้ขอเลือกได้ตอนสร้างคำขอ — เพิ่ม/แก้ไข/ลบได้อิสระ</p>' +
+      '<div id="l2ApproverList">' + L2_APPROVERS.map(a => l2ApproverRowHtml(a.email, a.name, a.email, false)).join("") + '</div>' +
+      '<div id="l2ApproverDrafts">' + l2ApproverDraftRows.map(r => l2ApproverRowHtml(r.tempId, r.name, r.email, true)).join("") + '</div>' +
+      '<button class="addItemBtn" onclick="addL2ApproverRow()">+ เพิ่มผู้อนุมัติขั้น 2</button>' +
+    '</div>' +
+    '<div class="formCard">' +
+      '<h3 style="margin-top:0;">ข้อมูลอ้างอิงอื่นๆ (Read-only)</h3>' +
+      '<p style="font-size:12.5px;color:var(--muted);">ประเภทการนำออก, หน่วยนับ, และรายชื่อแผนก กำหนดไว้ในตัวแอปโดยตรง หากต้องการเพิ่ม/ลดแผนก หรือประเภทการนำออก แจ้ง Developer เพื่อแก้ไขใน app.js</p>' +
     '</div>';
+}
+
+function deptApproverRowHtml(d) {
+  const rowId = "dept_" + d.id;
+  return '<div style="display:grid;grid-template-columns:1.2fr 1.3fr 1.6fr auto;gap:8px;align-items:end;padding:10px 0;border-bottom:1px solid var(--border);">' +
+    '<div style="font-size:13px;font-weight:600;color:var(--navy);padding-bottom:9px;">' + escapeHtml(d.name_th) + '</div>' +
+    '<div class="field" style="margin:0;"><label>ชื่อผู้อนุมัติ</label><input type="text" id="' + rowId + '_name" value="' + escapeHtml(d.l1_name) + '"></div>' +
+    '<div class="field" style="margin:0;"><label>Email</label><input type="email" id="' + rowId + '_email" value="' + escapeHtml(d.l1_email) + '"></div>' +
+    '<button class="btnGhost" style="padding:9px 14px;" onclick="saveDeptApprover(\'' + d.id + '\')">Save</button>' +
+  '</div>';
+}
+
+function l2ApproverRowHtml(rowKey, name, email, isDraft) {
+  const rowId = "l2_" + rowKey.replace(/[^a-zA-Z0-9]/g, "_");
+  return '<div style="display:grid;grid-template-columns:1.3fr 1.6fr auto auto;gap:8px;align-items:end;padding:10px 0;border-bottom:1px solid var(--border);">' +
+    '<div class="field" style="margin:0;"><label>ชื่อ</label><input type="text" id="' + rowId + '_name" value="' + escapeHtml(name || "") + '"></div>' +
+    '<div class="field" style="margin:0;"><label>Email</label><input type="email" id="' + rowId + '_email" value="' + escapeHtml(email || "") + '" ' + (isDraft ? "" : "") + '></div>' +
+    '<button class="btnGhost" style="padding:9px 14px;" onclick="saveL2Approver(\'' + rowKey + '\', ' + (isDraft ? "true" : "false") + ')">Save</button>' +
+    '<button class="btnDanger" style="padding:9px 14px;" onclick="' + (isDraft ? "removeL2DraftRow('" + rowKey + "')" : "deleteL2Approver('" + rowKey + "')") + '">ลบ</button>' +
+  '</div>';
+}
+
+function addL2ApproverRow() {
+  l2ApproverDraftRows.push({ tempId: "draft_" + (++itemCounter), name: "", email: "" });
+  renderAdminView();
+}
+
+function removeL2DraftRow(tempId) {
+  l2ApproverDraftRows = l2ApproverDraftRows.filter(r => r.tempId !== tempId);
+  renderAdminView();
+}
+
+async function saveDeptApprover(deptId) {
+  const nameEl = document.getElementById("dept_" + deptId + "_name");
+  const emailEl = document.getElementById("dept_" + deptId + "_email");
+  const name = nameEl.value.trim();
+  const email = emailEl.value.trim().toLowerCase();
+  if (!name || !email) return showToast("กรุณากรอกชื่อและ Email ให้ครบ", "err");
+  if (!email.includes("@")) return showToast("รูปแบบ Email ไม่ถูกต้อง", "err");
+  try {
+    await db.collection("departments").doc(deptId).set({ l1_name: name, l1_email: email }, { merge: true });
+    const target = DEPARTMENTS.find(d => d.id === deptId);
+    if (target) { target.l1_name = name; target.l1_email = email; }
+    showToast("บันทึกผู้อนุมัติขั้น 1 ของแผนกนี้แล้ว", "ok");
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function saveL2Approver(rowKey, isDraft) {
+  const rowId = "l2_" + rowKey.replace(/[^a-zA-Z0-9]/g, "_");
+  const nameEl = document.getElementById(rowId + "_name");
+  const emailEl = document.getElementById(rowId + "_email");
+  const name = nameEl.value.trim();
+  const email = emailEl.value.trim().toLowerCase();
+  if (!name || !email) return showToast("กรุณากรอกชื่อและ Email ให้ครบ", "err");
+  if (!email.includes("@")) return showToast("รูปแบบ Email ไม่ถูกต้อง", "err");
+  const docId = email.replace(/[^a-zA-Z0-9]/g, "_");
+  try {
+    // if this save changes the email of an EXISTING (non-draft) row, remove the old doc first
+    if (!isDraft && rowKey !== email) {
+      const oldDocId = rowKey.replace(/[^a-zA-Z0-9]/g, "_");
+      await db.collection("l2Approvers").doc(oldDocId).delete();
+      L2_APPROVERS = L2_APPROVERS.filter(a => a.email !== rowKey);
+    }
+    await db.collection("l2Approvers").doc(docId).set({ name, email });
+    const existing = L2_APPROVERS.find(a => a.email === email);
+    if (existing) { existing.name = name; } else { L2_APPROVERS.push({ name, email }); }
+    if (isDraft) l2ApproverDraftRows = l2ApproverDraftRows.filter(r => r.tempId !== rowKey);
+    showToast("บันทึกผู้อนุมัติขั้น 2 แล้ว", "ok");
+    renderAdminView();
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
+}
+
+async function deleteL2Approver(email) {
+  if (L2_APPROVERS.length <= 1) return showToast("ต้องมีผู้อนุมัติขั้น 2 อย่างน้อย 1 คน", "err");
+  if (!confirm("ยืนยันลบผู้อนุมัติขั้น 2 คนนี้?")) return;
+  const docId = email.replace(/[^a-zA-Z0-9]/g, "_");
+  try {
+    await db.collection("l2Approvers").doc(docId).delete();
+    L2_APPROVERS = L2_APPROVERS.filter(a => a.email !== email);
+    showToast("ลบแล้ว", "ok");
+    renderAdminView();
+  } catch (e) { showToast("เกิดข้อผิดพลาด: " + e.message, "err"); }
 }
